@@ -6,6 +6,7 @@ import type {
 } from '@/types';
 import { WEIGHTS } from './ugandaData';
 
+// ── Safe JSON & localStorage helpers ──────────────────────────────────
 function safeJSONParse<T>(str: string, defaultVal: T): T {
   try {
     return JSON.parse(str) as T;
@@ -27,7 +28,6 @@ function safeLocalStorageSet(key: string, val: string): boolean {
     localStorage.setItem(key, val);
     return true;
   } catch (e) {
-    // localStorage may be full or unavailable (private browsing, quota exceeded)
     console.warn('[learningEngine] localStorage write failed:', (e as Error)?.message);
     return false;
   }
@@ -38,9 +38,9 @@ function toNum(v: unknown, fallback = 0): number {
   return isFinite(n) ? n : fallback;
 }
 
+// ── Constants ─────────────────────────────────────────────────────────
 const STORAGE_KEY = 'uganda_learning_engine_v4';
 
-// Maximum sizes to prevent unbounded memory growth
 const MAX_PRICES_PER_DISTRICT = 100;
 const MAX_TREND_PRICES = 20;
 const MAX_CORRELATIONS = 2000;
@@ -48,14 +48,19 @@ const MAX_PARSE_RULES = 500;
 const MAX_CONTEXT_PER_PATTERN = 5;
 const MAX_PATTERN_KEYS = 5000;
 
+// ── Learning Engine ───────────────────────────────────────────────────
 export class LearningEngine {
   knowledge: LearningKnowledge;
+
+  // Fast O(1) lookup for correlations (rebuild after load/import)
+  private correlationIndex = new Map<string, number>();
 
   constructor() {
     this.knowledge = this._emptyKnowledge();
     this.load();
   }
 
+  // ── Initialisation ──────────────────────────────────────────────────
   private _emptyKnowledge(): LearningKnowledge {
     return {
       patterns: {},
@@ -75,6 +80,7 @@ export class LearningEngine {
 
   reset() {
     this.knowledge = this._emptyKnowledge();
+    this.correlationIndex.clear();
     this.save();
   }
 
@@ -105,6 +111,7 @@ export class LearningEngine {
       this.knowledge.processedCount = toNum(parsed.processedCount, 0);
       this.knowledge.lastUpdated = toNum(parsed.lastUpdated, Date.now());
       this.knowledge.totalPatterns = Object.keys(this.knowledge.patterns).length;
+      this._rebuildCorrelationIndex();
     } catch {
       this.reset();
     }
@@ -116,8 +123,21 @@ export class LearningEngine {
     safeLocalStorageSet(STORAGE_KEY, JSON.stringify(this.knowledge));
   }
 
+  private _rebuildCorrelationIndex() {
+    this.correlationIndex.clear();
+    this.knowledge.correlations.forEach((c, i) => {
+      const key = this._correlationKey(c.word1, c.word2);
+      this.correlationIndex.set(key, i);
+    });
+  }
+
+  private _correlationKey(w1: string, w2: string): string {
+    return w1 < w2 ? `${w1}|${w2}` : `${w2}|${w1}`;
+  }
+
+  // ── Core Learning ───────────────────────────────────────────────────
   learn(listing: Listing, qualityWeight = 1.0) {
-    // Guard: reject invalid input
+    // Guard invalid input
     if (!listing || !listing.title || !listing.areaName) return;
     const price = toNum(listing.priceUGX, 0);
     if (!isFinite(price) || price < 0) return;
@@ -128,7 +148,7 @@ export class LearningEngine {
     const count = this.knowledge.processedCount;
     this.knowledge.qualityScore = (prev * (count - 1) + qw) / count;
 
-    // Tokenise text — cap at 25 meaningful words
+    // Tokenise text – cap at 25 meaningful words
     const text = [listing.title, listing.notes || '', listing.size || '']
       .join(' ')
       .toLowerCase();
@@ -138,13 +158,13 @@ export class LearningEngine {
       .filter(w => w.length > 3)
       .slice(0, 25);
 
-    // Guard pattern count growth
-    const currentKeys = Object.keys(this.knowledge.patterns).length;
+    // ── Patterns ────────────────────────────────────────────────────
+    // Use a mutable counter to honour the limit strictly
+    let currentPatternKeys = Object.keys(this.knowledge.patterns).length;
 
     words.forEach(word => {
       if (!this.knowledge.patterns[word]) {
-        // Don't grow patterns beyond limit
-        if (currentKeys >= MAX_PATTERN_KEYS) return;
+        if (currentPatternKeys >= MAX_PATTERN_KEYS) return; // hard limit
         this.knowledge.patterns[word] = {
           count: 0,
           avgPrice: 0,
@@ -153,6 +173,7 @@ export class LearningEngine {
           confidence: 0.1,
           context: [],
         };
+        currentPatternKeys++; // accurately track the new key
       }
       const p = this.knowledge.patterns[word] as PatternData;
       p.count++;
@@ -170,7 +191,7 @@ export class LearningEngine {
       }
     });
 
-    // Price ranges per district
+    // ── Price ranges ────────────────────────────────────────────────
     if (!this.knowledge.priceRanges[listing.areaName]) {
       this.knowledge.priceRanges[listing.areaName] = {
         min: Infinity,
@@ -197,29 +218,37 @@ export class LearningEngine {
       );
     }
 
-    // Word correlations — cap total
+    // ── Correlations (fast lookup with index) ──────────────────────
     if (this.knowledge.correlations.length < MAX_CORRELATIONS) {
       for (let i = 0; i < words.length; i++) {
         for (let j = i + 1; j < Math.min(i + 4, words.length); j++) {
           const w1 = words[i];
           const w2 = words[j];
           if (w1 === w2) continue;
-          let corr = this.knowledge.correlations.find(
-            c => (c.word1 === w1 && c.word2 === w2) || (c.word1 === w2 && c.word2 === w1)
-          );
-          if (!corr) {
+
+          const key = this._correlationKey(w1, w2);
+          let idx = this.correlationIndex.get(key);
+          let corr;
+
+          if (idx !== undefined) {
+            corr = this.knowledge.correlations[idx];
+          } else {
+            // Enforce limit *inside* the loop to prevent overshooting
             if (this.knowledge.correlations.length >= MAX_CORRELATIONS) break;
             corr = { word1: w1, word2: w2, strength: 0, qualityTotal: 0, confidence: 0.1 };
+            const newIdx = this.knowledge.correlations.length;
             this.knowledge.correlations.push(corr);
+            this.correlationIndex.set(key, newIdx);
           }
           corr.strength++;
           corr.qualityTotal = toNum(corr.qualityTotal) + qw;
           corr.confidence = Math.min(1, corr.confidence + 0.03 * qw);
         }
+        if (this.knowledge.correlations.length >= MAX_CORRELATIONS) break;
       }
     }
 
-    // Parse rules — cap total
+    // ── Parse rules (limit enforced inside) ────────────────────────
     if (words.length > 0 && price > 0 && this.knowledge.parseRules.length < MAX_PARSE_RULES) {
       const existing = this.knowledge.parseRules.find(
         r => r.patterns.some(p => words.slice(0, 3).includes(p)) && r.district === listing.areaName
@@ -229,17 +258,20 @@ export class LearningEngine {
         existing.avgPrice = (existing.avgPrice * (existing.count - 1) + price) / existing.count;
         existing.confidence = Math.min(1, existing.confidence + 0.1 * qw);
       } else {
-        this.knowledge.parseRules.push({
-          patterns: words.slice(0, 5),
-          district: listing.areaName,
-          avgPrice: price,
-          count: 1,
-          confidence: 0.3 * qw,
-        });
+        // check limit again before pushing
+        if (this.knowledge.parseRules.length < MAX_PARSE_RULES) {
+          this.knowledge.parseRules.push({
+            patterns: words.slice(0, 5),
+            district: listing.areaName,
+            avgPrice: price,
+            count: 1,
+            confidence: 0.3 * qw,
+          });
+        }
       }
     }
 
-    // Market trends
+    // ── Market trends ──────────────────────────────────────────────
     let trend = this.knowledge.marketTrends.find(t => t.district === listing.areaName);
     if (!trend) {
       trend = {
@@ -262,8 +294,8 @@ export class LearningEngine {
       trend.trend = second > first * 1.05 ? 'rising' : second < first * 0.95 ? 'falling' : 'stable';
     }
 
-    // Seasonal trends
-    const month = new Date().getMonth();
+    // ── Seasonal trends (use listing date if available) ────────────
+    const month = listing.date ? new Date(listing.date).getMonth() : new Date().getMonth();
     if (!this.knowledge.seasonalTrends[listing.areaName])
       this.knowledge.seasonalTrends[listing.areaName] = {};
     if (!this.knowledge.seasonalTrends[listing.areaName][month])
@@ -272,7 +304,7 @@ export class LearningEngine {
     st.total += price;
     st.count++;
 
-    // Geospatial cache from verified listings
+    // ── Geospatial cache ───────────────────────────────────────────
     if (listing.village && listing.lat && listing.lng && listing._geocoded) {
       this.knowledge.geospatialCache[String(listing.village).toLowerCase()] = {
         lat: toNum(listing.lat, 0),
@@ -285,14 +317,26 @@ export class LearningEngine {
     this.save();
   }
 
+  // ── Interest Inference (now uses learned price context) ──────────
   inferInterest(price: number, area: string): 'high' | 'medium' | 'low' {
+    const pr = this.knowledge.priceRanges[area];
+    // If we have enough data, compare to district average; otherwise fallback to weights.
+    if (pr && pr.count >= 5) {
+      const ratio = price / (pr.avg || 1);
+      if (ratio <= 0.7) return 'high';      // well below average → good deal
+      if (ratio <= 1.2) return 'medium';    // near average
+      return 'low';                          // above average
+    }
+    // Fallback: use the global WEIGHTS as a crude baseline (0.7) and a reasonable price range.
     const base = (WEIGHTS as Record<string, number>)[area] ?? 0.7;
-    const adj = toNum(price, 0) / (base || 0.7);
-    if (adj >= 180) return 'high';
-    if (adj >= 80) return 'medium';
+    // Assume base represents a baseline price in millions; thresholds adjusted for typical UGX range.
+    const normalized = toNum(price, 0) / (base * 1_000_000);
+    if (normalized <= 80) return 'high';
+    if (normalized <= 180) return 'medium';
     return 'low';
   }
 
+  // ── Pattern application to raw data ──────────────────────────────
   applyPatternsToRawData(text: string): {
     enhanced: Record<string, unknown>;
     improvements: string[];
@@ -336,6 +380,7 @@ export class LearningEngine {
     }
 
     if (words.length > 0) {
+      // Use the correlation index for speed if we want, but linear search on small set is fine.
       for (const corr of this.knowledge.correlations) {
         if (corr.confidence > 0.5 && (words.includes(corr.word1) || words.includes(corr.word2))) {
           const sizeMatch = text.match(/(\d+(?:\.\d+)?)\s*(acres|sqm|m²|x\s*\d+)/i);
@@ -352,6 +397,7 @@ export class LearningEngine {
     return { enhanced, improvements };
   }
 
+  // ── Summary ────────────────────────────────────────────────────────
   getSummary(): LearningSummary {
     const ranges = Object.values(this.knowledge.priceRanges);
     const total = ranges.reduce((s, pr) => s + toNum(pr.count, 0), 0);
@@ -389,6 +435,7 @@ export class LearningEngine {
         this.knowledge.parseRules = parsed.parseRules;
       this.knowledge.qualityScore = toNum(parsed.qualityScore, 0);
       this.knowledge.processedCount = toNum(parsed.processedCount, 0);
+      this._rebuildCorrelationIndex();
       this.save();
       return { success: true, message: `Imported from ${parsed.version || 'unknown'} → v4.0` };
     } catch (e) {
@@ -399,6 +446,7 @@ export class LearningEngine {
 
 export const learner = new LearningEngine();
 
+// ── Quality scoring (unchanged, but confirmed) ────────────────────────
 export function computeQualityScore(listing: Listing): number {
   if (!listing) return 0;
   let score = 1.0;

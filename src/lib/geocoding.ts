@@ -1,18 +1,84 @@
 import { localGeocode, DISTRICT_CENTRES } from './ugandaData';
 import type { GeocodeResult, UnverifiedLocation } from '@/types';
 
-// In-memory cache: null means "tried and not found", undefined means "not tried"
-const geoCache = new Map<string, GeocodeResult | null>();
+// ---------- LRU cache (simple, size-limited) ----------
+class LRUCache<K, V> {
+  private map = new Map<K, V>();
+  private maxSize: number;
+
+  constructor(maxSize: number) {
+    this.maxSize = maxSize;
+  }
+
+  get(key: K): V | undefined {
+    if (!this.map.has(key)) return undefined;
+    // Move to end (most recently used)
+    const value = this.map.get(key)!;
+    this.map.delete(key);
+    this.map.set(key, value);
+    return value;
+  }
+
+  set(key: K, value: V): void {
+    if (this.map.has(key)) {
+      this.map.delete(key);
+    } else if (this.map.size >= this.maxSize) {
+      // Evict oldest (first inserted)
+      const firstKey = this.map.keys().next().value;
+      this.map.delete(firstKey);
+    }
+    this.map.set(key, value);
+  }
+
+  clear(): void {
+    this.map.clear();
+  }
+}
+
+// ---------- Rate limiter (1 request/second for OSM) ----------
+class RateLimiter {
+  private lastRequestTime = 0;
+  private minIntervalMs: number;
+
+  constructor(requestsPerSecond: number) {
+    this.minIntervalMs = 1000 / requestsPerSecond;
+  }
+
+  async waitForSlot(): Promise<void> {
+    const now = Date.now();
+    const elapsed = now - this.lastRequestTime;
+    if (elapsed < this.minIntervalMs) {
+      const delay = this.minIntervalMs - elapsed;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    this.lastRequestTime = Date.now(); // update after the wait
+  }
+}
+
+// ---------- Global state ----------
+// Cache: null = "proven not found", undefined = not tried
+// Using LRU with a cap of 5000 entries – adjust as needed
+const MAX_CACHE_SIZE = 5000;
+const geoCache = new LRUCache<string, GeocodeResult | null>(MAX_CACHE_SIZE);
+
+// Rate limiter: 1 request per second to Nominatim
+const nominatimLimiter = new RateLimiter(1);
+
+// ---------- Helper: check if an error is transient (should not be cached) ----------
+function isTransientError(status: number): boolean {
+  return status === 429 || status >= 500; // rate-limit or server errors
+}
+
+// ---------- Core geocoding functions ----------
 
 /**
  * Geocode a location using OSM Nominatim API.
  * Returns null if the place cannot be found (unverified).
  *
- * Fixes:
- * - AbortController timeout prevents hanging requests
- * - Validates lat/lng are finite numbers before accepting result
- * - Bounds-check: rejects OSM results outside Uganda (roughly)
- * - Network errors don't pollute the cache (transient vs permanent miss)
+ * Robustness:
+ * - Enforces 1 req/sec rate limit globally via RateLimiter
+ * - Does NOT cache transient failures (429, 5xx)
+ * - Retries once on network/transient errors with a short delay
  */
 export async function geocodeOSM(
   village: string,
@@ -23,11 +89,13 @@ export async function geocodeOSM(
   const v = village.trim();
   const cacheKey = `${v.toLowerCase()}|${district.toLowerCase()}`;
 
-  if (geoCache.has(cacheKey)) {
-    return geoCache.get(cacheKey) ?? null;
+  // Check LRU cache
+  const cached = geoCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached ?? null;
   }
 
-  // Try local database first (instant, no network)
+  // ---- Local database (instant, no rate limit) ----
   const local = localGeocode(v + ' ' + district);
   if (local) {
     const result: GeocodeResult = { lat: local.lat, lng: local.lng, source: 'local' };
@@ -35,7 +103,6 @@ export async function geocodeOSM(
     return result;
   }
 
-  // Also try just the village name alone against local db
   const localV = localGeocode(v);
   if (localV) {
     const result: GeocodeResult = { lat: localV.lat, lng: localV.lng, source: 'local' };
@@ -43,57 +110,94 @@ export async function geocodeOSM(
     return result;
   }
 
-  // OSM Nominatim with timeout
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 7000);
+  // ---- OSM Nominatim with retry & rate limiting ----
+  const maxRetries = 1;
+  const query = `${v}, ${district}, Uganda`;
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=3&countrycodes=ug&accept-language=en`;
 
-  try {
-    const query = `${v}, ${district}, Uganda`;
-    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=3&countrycodes=ug&accept-language=en`;
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'UgandaRealEstateMap/1.0 (educational project)' },
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // Wait for rate-limit slot before each HTTP request
+    await nominatimLimiter.waitForSlot();
 
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        // Pick first result with valid Uganda-bounds coordinates
-        for (const place of data) {
-          const lat = parseFloat(place.lat);
-          const lng = parseFloat(place.lon);
-          if (
-            isFinite(lat) && isFinite(lng) &&
-            lat >= -2 && lat <= 5 &&    // Uganda lat range
-            lng >= 29.5 && lng <= 35.1  // Uganda lng range
-          ) {
-            const result: GeocodeResult = {
-              lat,
-              lng,
-              source: 'osm',
-              displayName: place.display_name,
-            };
-            geoCache.set(cacheKey, result);
-            return result;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 7000);
+
+    try {
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'UgandaRealEstateMap/1.0 (educational project)' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          for (const place of data) {
+            const lat = parseFloat(place.lat);
+            const lng = parseFloat(place.lon);
+            if (
+              isFinite(lat) && isFinite(lng) &&
+              lat >= -2 && lat <= 5 &&
+              lng >= 29.5 && lng <= 35.1
+            ) {
+              const result: GeocodeResult = {
+                lat,
+                lng,
+                source: 'osm',
+                displayName: place.display_name,
+              };
+              geoCache.set(cacheKey, result);
+              return result;
+            }
           }
         }
+        // Nominatim returned 200 but no results – cache as genuine miss
+        geoCache.set(cacheKey, null);
+        return null;
       }
-    }
-  } catch (err) {
-    clearTimeout(timeoutId);
-    if ((err as Error)?.name === 'AbortError') {
-      // Timeout — do NOT cache, allow retry later
-      console.warn(`[geocoding] Timeout for "${v}, ${district}"`);
+
+      // Non-ok response (e.g. 429, 503)
+      if (isTransientError(res.status)) {
+        console.warn(
+          `[geocoding] Transient error ${res.status} for "${v}, ${district}" (attempt ${attempt + 1})`
+        );
+        if (attempt < maxRetries) {
+          // Wait a bit longer before retry
+          await new Promise(r => setTimeout(r, 2000));
+          continue; // retry
+        }
+        // Exhausted retries – do NOT cache
+        return null;
+      }
+
+      // Other client errors (4xx except 429) – treat as permanent miss
+      console.warn(`[geocoding] Permanent error ${res.status} for "${v}, ${district}"`);
+      geoCache.set(cacheKey, null);
+      return null;
+
+    } catch (err) {
+      clearTimeout(timeoutId);
+      const error = err as Error;
+      if (error.name === 'AbortError') {
+        // Timeout – transient, do not cache
+        console.warn(`[geocoding] Timeout for "${v}, ${district}"`);
+        if (attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, 1500));
+          continue;
+        }
+        return null;
+      }
+      // Network error – transient, do not cache
+      console.warn(`[geocoding] Network error for "${v}, ${district}":`, error.message);
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
       return null;
     }
-    // Network error — do NOT cache, could be transient
-    console.warn(`[geocoding] Network error for "${v}, ${district}":`, (err as Error)?.message);
-    return null;
   }
 
-  // Genuine not found — cache the miss
-  geoCache.set(cacheKey, null);
+  // Should not reach here, but for safety
   return null;
 }
 
@@ -131,7 +235,7 @@ export async function geocodeWithVariations(
     if (result) return { result, attemptedQueries };
   }
 
-  // Attempt 3: first word only (sometimes the key place token)
+  // Attempt 3: first word only
   const firstWord = v.split(/\s+/)[0];
   if (firstWord && firstWord.length > 3 && firstWord !== cleaned && firstWord !== v) {
     result = await geocodeOSM(firstWord, district);
@@ -139,7 +243,7 @@ export async function geocodeWithVariations(
     if (result) return { result, attemptedQueries };
   }
 
-  // Attempt 4: village without district (sometimes OSM finds it globally)
+  // Attempt 4: village without district
   if (v.length > 4) {
     result = await geocodeOSM(v, '');
     attemptedQueries.push(`${v}, Uganda`);
@@ -196,8 +300,8 @@ export function getFallbackCoords(district: string): GeocodeResult {
 
 /**
  * Batch geocode multiple listings.
- * Returns verified listings with coords and a list of unverified locations.
- * Processes in batches of 3 to respect Nominatim rate limits (1 req/sec).
+ * Processes one by one to ensure rate‑limit compliance
+ * (1 request/sec, with retries already handled inside geocodeOSM).
  */
 export async function batchGeocode(
   listings: Array<{
@@ -213,44 +317,33 @@ export async function batchGeocode(
   const verified: Array<{ id: number; coords: GeocodeResult }> = [];
   const unverified: UnverifiedLocation[] = [];
 
-  const batchSize = 3;
-  for (let i = 0; i < listings.length; i += batchSize) {
-    const batch = listings.slice(i, i + batchSize);
-    const results = await Promise.allSettled(batch.map(l => geocodeListing(l)));
-
-    for (let j = 0; j < results.length; j++) {
-      const settled = results[j];
-      const listing = batch[j];
-      if (settled.status === 'fulfilled') {
-        const result = settled.value;
-        if (result.isVerified && result.coords) {
-          verified.push({ id: listing.id, coords: result.coords });
-        } else if (result.unverified) {
-          unverified.push(result.unverified);
-        }
-      } else {
-        // Rejected promise — treat as unverified
-        unverified.push({
-          id: listing.id,
-          originalText: listing.originalText,
-          extractedLocation: listing.village,
-          reason: 'Geocoding failed with an unexpected error',
-          listing: { village: listing.village, district: listing.district },
-          attemptedQueries: [],
-        });
+  // Process sequentially – rate limiting is enforced by geocodeOSM's internal limiter.
+  // Sequential processing also simplifies error handling and avoids parallel overload.
+  for (const listing of listings) {
+    try {
+      const result = await geocodeListing(listing);
+      if (result.isVerified && result.coords) {
+        verified.push({ id: listing.id, coords: result.coords });
+      } else if (result.unverified) {
+        unverified.push(result.unverified);
       }
-    }
-
-    // 350ms between batches to stay under Nominatim 1 req/sec limit
-    if (i + batchSize < listings.length) {
-      await new Promise(r => setTimeout(r, 350));
+    } catch {
+      // Unexpected error – treat as unverified
+      unverified.push({
+        id: listing.id,
+        originalText: listing.originalText,
+        extractedLocation: listing.village,
+        reason: 'Geocoding failed with an unexpected error',
+        listing: { village: listing.village, district: listing.district },
+        attemptedQueries: [],
+      });
     }
   }
 
   return { verified, unverified };
 }
 
-/** Clear the in-memory geocoding cache (useful for testing or manual refresh). */
+/** Clear the LRU geocoding cache (useful for testing or manual refresh). */
 export function clearGeoCache(): void {
   geoCache.clear();
 }
