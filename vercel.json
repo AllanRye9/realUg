@@ -3,5 +3,4 @@
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "framework": "vite",
-  "nodeVersion": "22.x"
 }
