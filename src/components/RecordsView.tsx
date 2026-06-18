@@ -25,7 +25,6 @@ interface RecordsViewProps {
   onDeleteAll: () => void;
   onSelect: (listing: Listing) => void;
   onSetTab: (tab: string) => void;
-  unverifiedLocations: UnverifiedItem[];
   onSetUnverified: (items: UnverifiedItem[]) => void;
 }
 
@@ -36,7 +35,6 @@ export default function RecordsView({
   onDeleteAll,
   onSelect,
   onSetTab,
-  unverifiedLocations,
   onSetUnverified,
 }: RecordsViewProps) {
   const [rawText, setRawText] = useState('');
