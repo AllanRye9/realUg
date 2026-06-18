@@ -14,12 +14,15 @@ import './App.css';
 function safeJSONParse<T>(str: string, defaultVal: T): T {
   try { return JSON.parse(str) as T; } catch { return defaultVal; }
 }
+
 function safeLocalStorageGet(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
 }
+
 function safeLocalStorageSet(key: string, val: string): boolean {
   try { localStorage.setItem(key, val); return true; } catch { return false; }
 }
+
 function toNum(v: unknown, fallback = 0): number {
   const n = Number(v);
   return isFinite(n) ? n : fallback;
@@ -277,7 +280,6 @@ export default function App() {
             onDeleteAll={deleteAll}
             onSelect={(l: Listing) => setSelectedId(l.id)}
             onSetTab={setTab}
-            unverifiedLocations={unverified}
             onSetUnverified={setUnverified}
           />
         )}
