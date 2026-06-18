@@ -89,12 +89,6 @@ function str(v: unknown): string {
   return String(v);
 }
 
-function safeParseFloat(val: string | undefined | null): number {
-  if (!val) return NaN;
-  const num = parseFloat(val);
-  return num > 0 ? num : NaN;
-}
-
 function cleanText(text: string): string {
   return text.replace(WHITESPACE_PATTERN, ' ').trim();
 }
@@ -553,9 +547,11 @@ export function hasPropertyCriteria(text: string): CriteriaResult {
 
   const hasSize = SIZE_PATTERNS.some(p => p.regex.test(lower));
   
+  // FIX: UG_LOCATIONS is an object, use Object.keys to get an array of names
+  const locationNames = Object.keys(UG_LOCATIONS);
   const hasLocation = (
     /\b(?:in|at|located|situated|near|around|off|along)\s+[a-z]/i.test(lower) ||
-    UG_LOCATIONS.some(loc => lower.includes(loc.toLowerCase()))
+    locationNames.some(loc => lower.includes(loc.toLowerCase()))
   );
   
   const hasPrice = PRICE_PATTERNS.some(p => p.regex.test(lower));

@@ -294,8 +294,8 @@ export class LearningEngine {
       trend.trend = second > first * 1.05 ? 'rising' : second < first * 0.95 ? 'falling' : 'stable';
     }
 
-    // ── Seasonal trends (use listing date if available) ────────────
-    const month = listing.date ? new Date(listing.date).getMonth() : new Date().getMonth();
+    // ── Seasonal trends (using current month) ──────────────────────
+    const month = new Date().getMonth(); // Listing type has no date field
     if (!this.knowledge.seasonalTrends[listing.areaName])
       this.knowledge.seasonalTrends[listing.areaName] = {};
     if (!this.knowledge.seasonalTrends[listing.areaName][month])
@@ -380,7 +380,6 @@ export class LearningEngine {
     }
 
     if (words.length > 0) {
-      // Use the correlation index for speed if we want, but linear search on small set is fine.
       for (const corr of this.knowledge.correlations) {
         if (corr.confidence > 0.5 && (words.includes(corr.word1) || words.includes(corr.word2))) {
           const sizeMatch = text.match(/(\d+(?:\.\d+)?)\s*(acres|sqm|m²|x\s*\d+)/i);
@@ -446,7 +445,7 @@ export class LearningEngine {
 
 export const learner = new LearningEngine();
 
-// ── Quality scoring (unchanged, but confirmed) ────────────────────────
+// ── Quality scoring ──────────────────────────────────────────────────
 export function computeQualityScore(listing: Listing): number {
   if (!listing) return 0;
   let score = 1.0;

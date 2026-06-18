@@ -6,7 +6,7 @@ class LRUCache<K, V> {
   private map = new Map<K, V>();
   private maxSize: number;
 
-  constructor(maxSize: number) {
+  constructor(maxSize: number = 1000) { // give a default to be safe
     this.maxSize = maxSize;
   }
 
@@ -25,7 +25,7 @@ class LRUCache<K, V> {
     } else if (this.map.size >= this.maxSize) {
       // Evict oldest (first inserted)
       const firstKey = this.map.keys().next().value;
-      this.map.delete(firstKey);
+      this.map.delete(firstKey!); // ← fix: non-null assertion
     }
     this.map.set(key, value);
   }
