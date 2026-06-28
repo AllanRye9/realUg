@@ -588,8 +588,11 @@ export default function RecordsView({
                         : 'No listings match the current filter.'}
                     </td>
                   </tr>
-                ) : (
-                  filtered.map(l => (
+                ) : (() => {
+                  const verifiedRows = filtered.filter(l => l._geocoded || l._geocodeSource === 'local');
+                  const unverifiedRows = filtered.filter(l => !l._geocoded && l._geocodeSource !== 'local');
+
+                  const renderRow = (l: Listing) => (
                     <tr
                       key={l.id}
                       className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
@@ -632,8 +635,48 @@ export default function RecordsView({
                         </button>
                       </td>
                     </tr>
-                  ))
-                )}
+                  );
+
+                  return (
+                    <>
+                      {verifiedRows.length > 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-2 pt-3 pb-1">
+                            <span className="text-[10px] font-semibold text-green-700 uppercase tracking-widest">
+                              ✓ OSM Verified — {verifiedRows.length}
+                            </span>
+                          </td>
+                        </tr>
+                      )}
+                      {verifiedRows.map(renderRow)}
+
+                      {verifiedRows.length > 0 && unverifiedRows.length > 0 && (
+                        <tr>
+                          <td colSpan={5} className="py-0">
+                            <div className="relative flex items-center my-2 mx-2">
+                              <div className="flex-1 h-px bg-gradient-to-r from-green-400 to-transparent" />
+                              <span className="mx-3 text-[10px] text-slate-400 border border-slate-200 rounded-full px-2 py-0.5 bg-white whitespace-nowrap">
+                                ⬆ OSM verified &nbsp;·&nbsp; not on OSM ⬇
+                              </span>
+                              <div className="flex-1 h-px bg-gradient-to-l from-red-400 to-transparent" />
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+
+                      {unverifiedRows.length > 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-2 pt-1 pb-1">
+                            <span className="text-[10px] font-semibold text-red-600 uppercase tracking-widest">
+                              ⚠ Unverified Location — {unverifiedRows.length}
+                            </span>
+                          </td>
+                        </tr>
+                      )}
+                      {unverifiedRows.map(renderRow)}
+                    </>
+                  );
+                })()}
               </tbody>
             </table>
           </div>

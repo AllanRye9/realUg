@@ -4,11 +4,11 @@ import { Badge } from '@/components/ui/badge';
 import type { Listing } from '@/types';
 import { DISTRICT_CENTRES } from '@/lib/ugandaData';
 import { learner, computeQualityScore } from '@/lib/learningEngine';
-import MapView from '@/components/MapView';
-import RecordsView from '@/components/RecordsView';
-import AnalyticsView from '@/components/AnalyticsView';
-import ValuationView from '@/components/ValuationView';
-import MemoryView from '@/components/MemoryView';
+import MapView from '@/features/map/MapView';
+import RecordsView from '@/features/records/RecordsView';
+import AnalyticsView from '@/features/analytics/AnalyticsView';
+import ValuationView from '@/features/valuation/ValuationView';
+import MemoryView from '@/features/memory/MemoryView';
 import './App.css';
 
 function safeJSONParse<T>(str: string, defaultVal: T): T {
@@ -59,7 +59,7 @@ function sanitizeListing(l: Record<string, unknown>): Listing | null {
 export default function App() {
   const [listings, setListings] = useState<Listing[]>(() => {
     try {
-      const saved = safeLocalStorageGet('ug_persist_v4');
+      const saved = safeLocalStorageGet('ug_persist_v5');
       if (saved) {
         const parsed = safeJSONParse<unknown[]>(saved, []);
         const arr = Array.isArray(parsed) ? parsed : [];
@@ -90,7 +90,7 @@ export default function App() {
 
   // Persist listings
   useEffect(() => {
-    safeLocalStorageSet('ug_persist_v4', JSON.stringify(listings));
+    safeLocalStorageSet('ug_persist_v5', JSON.stringify(listings));
   }, [listings]);
 
   const addOrUpdate = useCallback((newListing: Listing) => {
@@ -294,7 +294,7 @@ export default function App() {
 
         {tab === 'memory' && (
           <MemoryView onImport={() => {
-            const saved = safeLocalStorageGet('ug_persist_v4');
+            const saved = safeLocalStorageGet('ug_persist_v5');
             if (saved) {
               const parsed = safeJSONParse<unknown[]>(saved, []);
               const cleaned = (Array.isArray(parsed) ? parsed : [])

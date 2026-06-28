@@ -1,0 +1,1020 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Uganda Real Estate AI Map</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f8fafc;--surface:#fff;--s2:#f1f5f9;--border:#e2e8f0;
+  --text:#0f172a;--t2:#475569;--t3:#94a3b8;
+  --green:#16a34a;--gbg:#dcfce7;--gdk:#166534;
+  --blue:#2563eb;--bbg:#dbeafe;--bdk:#1e3a8a;
+  --red:#dc2626;--rbg:#fee2e2;--rdk:#991b1b;
+  --amber:#d97706;--abg:#fef3c7;--adk:#92400e;
+  --r:8px;
+}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+#app{display:flex;flex-direction:column;min-height:100vh}
+header{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;position:sticky;top:0;z-index:200}
+.logo{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}
+#hdr-stats{display:flex;gap:12px;font-size:12px;color:var(--t2);flex-wrap:wrap;align-items:center}
+nav{background:var(--surface);border-bottom:1px solid var(--border);display:flex;overflow-x:auto;position:sticky;top:49px;z-index:190}
+.tab{padding:10px 18px;font-size:13px;font-weight:500;border:none;background:none;cursor:pointer;color:var(--t2);border-bottom:2px solid transparent;white-space:nowrap}
+.tab.on{color:var(--text);border-bottom-color:var(--text)}
+main{flex:1;padding:16px;max-width:1280px;width:100%;margin:0 auto}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px}
+.ct{font-size:13px;font-weight:600;margin-bottom:12px}
+.badge{display:inline-flex;align-items:center;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;line-height:1.4}
+.b-osm{background:var(--gbg);color:var(--gdk)}
+.b-loc{background:var(--bbg);color:var(--bdk)}
+.b-unv{background:var(--rbg);color:var(--rdk)}
+.b-sold{background:var(--rbg);color:var(--rdk)}
+.b-ok{background:var(--gbg);color:var(--gdk)}
+.b-hi{background:#fce7f3;color:#9d174d}
+.b-med{background:var(--abg);color:var(--adk)}
+.b-lo{background:var(--bbg);color:var(--bdk)}
+input,select,textarea{border:1px solid var(--border);border-radius:var(--r);padding:8px 10px;font-size:13px;font-family:inherit;background:var(--surface);color:var(--text);width:100%;outline:none}
+input:focus,select:focus,textarea:focus{border-color:#93c5fd}
+textarea{resize:vertical;min-height:120px}
+button{cursor:pointer;font-family:inherit;font-size:13px;border-radius:var(--r);border:1px solid var(--border);background:var(--surface);color:var(--text);padding:7px 14px}
+button:hover{background:var(--s2)}
+button.primary{background:var(--text);color:#fff;border-color:var(--text)}
+button.primary:hover{background:#1e293b}
+button.danger{color:var(--red)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.pane{display:none}.pane.on{display:block}
+.progress-wrap{height:4px;background:var(--s2);border-radius:2px;margin-top:8px;overflow:hidden;display:none}
+.progress-fill{height:100%;background:#3b82f6;border-radius:2px;transition:width .3s}
+.msg{font-size:12px;margin-top:8px;min-height:18px}
+.msg.ok{color:var(--green)}.msg.err{color:var(--red)}.msg.info{color:var(--t2)}
+.listing-row{padding:10px 12px;border-bottom:1px solid var(--border);display:flex;align-items:start;gap:8px;cursor:pointer}
+.listing-row:last-child{border-bottom:none}
+.listing-row:hover{background:var(--s2)}
+.queue-item{border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:6px;font-size:12px}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px}
+.stat-box{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.stat-val{font-size:22px;font-weight:700;line-height:1}
+.stat-lbl{font-size:11px;color:var(--t2);margin-top:4px}
+.bar-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px}
+.bar-track{flex:1;background:var(--s2);border-radius:3px;height:14px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px}
+.osm-div{display:flex;align-items:center;gap:8px;margin:14px 0}
+.osm-div::before,.osm-div::after{content:'';flex:1;height:1px}
+.osm-div::before{background:linear-gradient(to right,transparent,var(--green))}
+.osm-div::after{background:linear-gradient(to left,transparent,var(--red))}
+.osm-div-lbl{font-size:11px;color:var(--t3);white-space:nowrap;padding:0 8px;border:1px solid var(--border);border-radius:99px;background:var(--bg)}
+/* ── Canvas Map ── */
+#map-wrap{position:relative;border-radius:12px;overflow:hidden;border:1px solid var(--border);background:#1a2035;user-select:none}
+#map-canvas{display:block;cursor:grab}
+#map-canvas.dragging{cursor:grabbing}
+.map-ui{position:absolute;z-index:10}
+.map-legend{bottom:12px;right:12px;background:rgba(10,18,40,.82);backdrop-filter:blur(4px);border-radius:8px;padding:10px 12px;color:#fff;font-size:11px}
+.leg-row{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.leg-row:last-child{margin-bottom:0}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.map-toolbar{top:10px;left:10px;display:flex;gap:6px;flex-wrap:wrap}
+.map-toolbar button{padding:5px 10px;font-size:12px;background:rgba(10,18,40,.82);color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:6px}
+.map-toolbar button:hover{background:rgba(30,50,90,.9)}
+.map-search-bar{top:10px;right:10px;display:flex;gap:4px}
+.map-search-bar input{background:rgba(10,18,40,.85);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:6px;padding:5px 10px;font-size:12px;width:160px}
+.map-search-bar input::placeholder{color:rgba(255,255,255,.35)}
+.map-search-bar button{padding:5px 10px;font-size:12px;background:#3b82f6;color:#fff;border:none;border-radius:6px}
+#map-tooltip{position:absolute;background:rgba(10,18,40,.93);color:#fff;font-size:12px;border-radius:8px;padding:8px 12px;pointer-events:none;display:none;z-index:20;max-width:220px;line-height:1.5}
+#map-stats-bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:12px}
+.unv-panel{border:1px solid #fca5a5;border-radius:12px;background:#fff5f5;overflow:hidden;margin-top:12px}
+.unv-ph{background:#fee2e2;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+.unv-pb{padding:12px 14px;display:none}
+.unv-item{border-top:1px solid #fecaca;padding:5px 0;font-size:12px}
+.unv-item:first-child{border-top:none}
+</style>
+</head>
+<body>
+<div id="app">
+
+<header>
+  <div class="logo">🗺 Uganda Real Estate AI <span class="badge b-osm" style="font-size:10px">OSM verified</span></div>
+  <div id="hdr-stats"></div>
+</header>
+
+<nav>
+  <button class="tab on" onclick="goTab('parse')">📥 Parse &amp; Import</button>
+  <button class="tab" onclick="goTab('map')">🗺 Map</button>
+  <button class="tab" onclick="goTab('records')">📋 Records</button>
+  <button class="tab" onclick="goTab('analytics')">📊 Analytics</button>
+  <button class="tab" onclick="goTab('memory')">💾 AI Memory</button>
+</nav>
+
+<main>
+
+<!-- PARSE -->
+<div id="pane-parse" class="pane on">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div class="card">
+      <div class="ct">AI-Powered Parser (standalone — no external AI)</div>
+      <p style="font-size:12px;color:var(--t2);margin-bottom:10px">Paste raw listing text or upload <code>.txt</code> / <code>.csv</code>. The parser extracts size, price, location, agent — rejects non-property lines — then geocodes against OSM.</p>
+      <div style="margin-bottom:10px">
+        <label style="font-size:12px;color:var(--t2);display:block;margin-bottom:4px">Fallback district</label>
+        <select id="fallback-dist"></select>
+      </div>
+      <textarea id="raw-text" placeholder="2 acres in Pece, Gulu city, UGX 220M. Call Andrew 0772123456
+Land 30x30m in Laroo, 350M, contact Billy
+Plot in Abwoch, 0.5 acres, UGX 180M — 0772987654
+3 acres at Koro, Omoro, 23m
+Prime 50x100 plot Nakasero Kampala 850M negotiable"></textarea>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="primary" id="btn-parse" onclick="runParse()">Parse &amp; Geocode</button>
+        <label><button onclick="this.parentElement.querySelector('input').click()">Upload file</button>
+          <input type="file" accept=".txt,.csv" style="display:none" onchange="onFile(event)"/></label>
+        <button class="danger" onclick="clearAll()">Clear all</button>
+      </div>
+      <div class="msg info" id="parse-msg"></div>
+      <div class="progress-wrap" id="parse-prog"><div class="progress-fill" id="parse-bar" style="width:0%"></div></div>
+    </div>
+    <div class="card">
+      <div class="ct">Parse Queue <span id="q-count" style="color:var(--t3);font-weight:400"></span></div>
+      <div id="q-list" style="font-size:12px;color:var(--t3)">No listings parsed yet.</div>
+      <div id="q-add" style="display:none;margin-top:10px">
+        <button class="primary" style="width:100%" onclick="addAllQueue()">Add all to map</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MAP -->
+<div id="pane-map" class="pane">
+  <div id="map-wrap">
+    <canvas id="map-canvas"></canvas>
+    <div class="map-ui map-toolbar">
+      <button onclick="mapZoom(1.25)">＋</button>
+      <button onclick="mapZoom(0.8)">－</button>
+      <button onclick="mapReset()">⌂ Reset</button>
+      <button onclick="mapFitAll()">⊡ Fit all</button>
+    </div>
+    <div class="map-ui map-search-bar">
+      <input id="map-q" placeholder="Search Uganda place…" onkeydown="if(event.key==='Enter')mapSearch()"/>
+      <button onclick="mapSearch()">Go</button>
+    </div>
+    <div class="map-ui map-legend" id="map-legend">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.45);margin-bottom:4px">OSM verified</div>
+      <div class="leg-row"><div class="dot" style="background:#16a34a"></div>High interest</div>
+      <div class="leg-row"><div class="dot" style="background:#eab308"></div>Medium</div>
+      <div class="leg-row"><div class="dot" style="background:#3b82f6"></div>Low</div>
+      <div class="leg-row"><div class="dot" style="background:#f85149"></div>Sold</div>
+      <hr style="border-color:rgba(255,255,255,.15);margin:5px 0"/>
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.45);margin-bottom:4px">Not on OSM</div>
+      <div class="leg-row"><div class="dot" style="background:#fca5a5;border:1.5px dashed #dc2626;width:9px;height:9px"></div>Unverified</div>
+    </div>
+    <div id="map-tooltip"></div>
+  </div>
+  <div id="map-unv-panel"></div>
+  <div id="map-stats-bar"></div>
+</div>
+
+<!-- RECORDS -->
+<div id="pane-records" class="pane">
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+    <input id="rec-q" placeholder="Search title, village, agent…" style="flex:1;min-width:140px" oninput="renderRecords()"/>
+    <select id="rec-status" onchange="renderRecords()" style="width:auto"><option value="all">All status</option><option value="unsold">Unsold</option><option value="sold">Sold</option></select>
+    <select id="rec-src" onchange="renderRecords()" style="width:auto"><option value="all">All sources</option><option value="osm">OSM</option><option value="local">Local DB</option><option value="fallback">Unverified</option></select>
+    <select id="rec-area" onchange="renderRecords()" style="width:auto"><option value="all">All districts</option></select>
+  </div>
+  <div class="card" style="padding:0;overflow:hidden">
+    <div id="rec-osm"></div>
+    <div id="rec-div" style="display:none"><div class="osm-div" style="padding:0 16px"><div class="osm-div-lbl">⬆ OSM verified &nbsp;·&nbsp; not on OSM ⬇</div></div></div>
+    <div id="rec-unv"></div>
+    <div id="rec-empty" style="padding:32px;text-align:center;color:var(--t3)">No listings yet.</div>
+  </div>
+</div>
+
+<!-- ANALYTICS -->
+<div id="pane-analytics" class="pane">
+  <div class="stats-grid" id="an-stats"></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div class="card"><div class="ct">Price by district (avg UGX M)</div><div id="an-dist"></div></div>
+    <div class="card"><div class="ct">By interest level</div><div id="an-int"></div></div>
+  </div>
+  <div class="card" style="margin-top:16px"><div class="ct">Market insights</div><div id="an-ins" style="font-size:12px;color:var(--t2);line-height:1.8"></div></div>
+</div>
+
+<!-- MEMORY -->
+<div id="pane-memory" class="pane">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div class="card">
+      <div class="ct">AI Learning Engine</div>
+      <div id="mem-status" style="font-size:12px;color:var(--t2)"></div>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button onclick="exportMem()">Export</button>
+        <button class="danger" onclick="resetMem()">Reset memory</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="ct">Import memory</div>
+      <textarea id="mem-import" placeholder="Paste exported JSON…" style="min-height:80px;font-size:11px;font-family:monospace"></textarea>
+      <button class="primary" style="margin-top:8px;width:100%" onclick="importMem()">Import</button>
+      <div class="msg" id="mem-msg"></div>
+    </div>
+  </div>
+</div>
+
+</main>
+</div>
+
+<script>
+// ═══════════════════════════════════
+// DATA
+// ═══════════════════════════════════
+const DIST={
+  'Gulu':{lat:2.7725,lng:32.299},'Nwoya':{lat:2.65,lng:31.9},'Amuru':{lat:3.0,lng:32.08},
+  'Omoro':{lat:2.95,lng:32.5},'Pader':{lat:3.0167,lng:33.2333},
+  'Kampala Central':{lat:0.3283,lng:32.5911},'Wakiso':{lat:0.398,lng:32.6395},
+  'Mukono':{lat:0.3544,lng:32.7481},'Entebbe':{lat:0.0512,lng:32.4637},
+  'Jinja':{lat:0.4244,lng:33.2042},'Mbarara':{lat:-0.6074,lng:30.6545},
+  'Arua':{lat:3.0167,lng:30.9119},'Lira':{lat:2.2499,lng:32.9},
+  'Soroti':{lat:1.7148,lng:33.6116},'Mbale':{lat:1.0821,lng:34.175},
+  'Masaka':{lat:-0.3333,lng:31.7341},'Fort Portal':{lat:0.671,lng:30.275},
+};
+const ALL_DIST=Object.keys(DIST);
+const WEIGHTS={'Kampala Central':1.4,'Entebbe':1.1,'Wakiso':0.9,'Mukono':0.7,'Jinja':0.7,
+  'Mbarara':0.6,'Arua':0.55,'Gulu':0.5,'Nwoya':0.5,'Amuru':0.5,'Omoro':0.5,
+  'Pader':0.4,'Lira':0.45,'Soroti':0.4,'Mbale':0.5,'Masaka':0.45,'Fort Portal':0.55};
+
+const UG_LOC={
+  'gulu':[2.7725,32.299],'gulu city':[2.7725,32.299],'gulu municipality':[2.7725,32.299],
+  'pece':[2.780,32.280],'pece division':[2.780,32.280],
+  'laroo':[2.790,32.310],'laroo division':[2.790,32.310],
+  'layibi':[2.760,32.320],'layibi division':[2.760,32.320],
+  'bardege':[2.800,32.270],'bar dege':[2.800,32.270],
+  'unyama':[2.820,32.300],'awach':[2.900,32.400],'abwoch':[2.900,32.400],
+  'patiko':[3.000,32.320],'palaro':[3.100,32.200],'koro':[2.900,32.600],
+  'lalogi':[2.850,32.450],'atede':[2.880,32.420],'atyang':[2.920,32.380],
+  'nwoya':[2.65,31.9],'anaka':[2.5,31.95],'purongo':[2.8,31.7],
+  'amuru':[3.0,32.08],'atiak':[3.2,32.05],'pabbo':[3.05,31.9],
+  'omoro':[2.95,32.5],'pader':[3.0167,33.2333],'kitgum':[3.2784,32.8858],
+  'kampala':[0.3283,32.5911],'nakasero':[0.320,32.580],'kololo':[0.340,32.590],
+  'ntinda':[0.360,32.610],'bugolobi':[0.310,32.610],'muyenga':[0.280,32.600],
+  'makindye':[0.290,32.580],'rubaga':[0.310,32.550],'kawempe':[0.370,32.570],
+  'nansana':[0.360,32.510],'kireka':[0.330,32.650],'kira':[0.370,32.640],
+  'kyaliwajjala':[0.350,32.660],'bweyogerere':[0.330,32.680],'kasubi':[0.340,32.550],
+  'katwe':[0.298,32.590],'kabalagala':[0.280,32.590],'bukoto':[0.345,32.595],
+  'naguru':[0.332,32.605],'kamwokya':[0.342,32.587],'nakawa':[0.328,32.620],
+  'wandegeya':[0.335,32.578],'mulago':[0.338,32.580],'mengo':[0.305,32.570],
+  'lubaga':[0.310,32.550],'kisenyi':[0.315,32.565],'nateete':[0.300,32.540],
+  'namungoona':[0.320,32.530],'busega':[0.300,32.520],
+  'wakiso':[0.398,32.6395],'gayaza':[0.450,32.620],'matugga':[0.500,32.580],
+  'kasangati':[0.430,32.600],'najjera':[0.370,32.630],'namugongo':[0.370,32.650],
+  'kyengera':[0.260,32.540],'kitende':[0.220,32.490],'bunamwaya':[0.240,32.510],
+  'lungujja':[0.280,32.560],'entebbe':[0.0512,32.4637],'kitoro':[0.060,32.470],
+  'mukono':[0.3544,32.7481],'njeru':[0.430,33.180],'lugazi':[0.410,33.020],
+  'seeta':[0.380,32.720],'jinja':[0.4244,33.2042],'bugembe':[0.450,33.220],
+  'kakira':[0.500,33.250],'mbarara':[-0.6074,30.6545],'kakoba':[-0.620,30.640],
+  'nyamitanga':[-0.640,30.660],'arua':[3.0167,30.9119],'lira':[2.2499,32.9],
+  'soroti':[1.7148,33.6116],'mbale':[1.0821,34.175],'masaka':[-0.3333,31.7341],
+  'fort portal':[0.671,30.275],
+};
+
+const DIST_RE=[
+  [/\b(pece|laroo|layibi|bardege|unyama|awach|abwoch|patiko|palaro|lalogi|atede|atyang|koro(?!\s*(?:le|ng))|gulu)/i,'Gulu'],
+  [/\b(nwoya|anaka|purongo)\b/i,'Nwoya'],
+  [/\b(amuru|atiak|pabbo)\b/i,'Amuru'],
+  [/\b(omoro)\b/i,'Omoro'],
+  [/\b(pader|kitgum)\b/i,'Pader'],
+  [/\b(nakasero|kololo|ntinda|bugolobi|muyenga|makindye|rubaga|kawempe|nansana|kireka|kira|kyaliwajjala|bweyogerere|kasubi|katwe|kabalagala|bukoto|naguru|kamwokya|nakawa|wandegeya|mulago|mengo|lubaga|kisenyi|nateete|busega|namungoona|kampala)/i,'Kampala Central'],
+  [/\b(wakiso|gayaza|matugga|kasangati|najjera|namugongo|kyengera|kitende|bunamwaya|lungujja)\b/i,'Wakiso'],
+  [/\b(mukono|njeru|lugazi|seeta)\b/i,'Mukono'],
+  [/\b(entebbe|kitoro)\b/i,'Entebbe'],
+  [/\b(jinja|bugembe|kakira)\b/i,'Jinja'],
+  [/\b(mbarara|kakoba|nyamitanga)\b/i,'Mbarara'],
+  [/\b(arua)\b/i,'Arua'],
+  [/\b(lira)\b/i,'Lira'],
+  [/\b(soroti)\b/i,'Soroti'],
+  [/\b(mbale)\b/i,'Mbale'],
+  [/\b(masaka)\b/i,'Masaka'],
+  [/\b(fort\s*portal)\b/i,'Fort Portal'],
+];
+
+// ═══════════════════════════════════
+// LOCAL GEOCODE
+// ═══════════════════════════════════
+function localGeocode(q){
+  if(!q)return null;
+  const k=q.toLowerCase().replace(/\s+/g,' ').trim();
+  if(UG_LOC[k])return{lat:UG_LOC[k][0],lng:UG_LOC[k][1],source:'local'};
+  const names=Object.keys(UG_LOC).sort((a,b)=>b.length-a.length);
+  for(const n of names){if(n.length<3)continue;if(k.includes(n)||n.includes(k))return{lat:UG_LOC[n][0],lng:UG_LOC[n][1],source:'local'};}
+  for(const d of ALL_DIST){if(k.includes(d.toLowerCase())){const c=DIST[d];return{lat:c.lat,lng:c.lng,source:'local'};}}
+  return null;
+}
+
+// ═══════════════════════════════════
+// OSM NOMINATIM
+// ═══════════════════════════════════
+const geoCache=new Map();
+let lastNom=0;
+async function waitNom(){const w=1100-(Date.now()-lastNom);if(w>0)await new Promise(r=>setTimeout(r,w));lastNom=Date.now();}
+async function nominatim(q){
+  const key=q.toLowerCase();
+  if(geoCache.has(key))return geoCache.get(key);
+  for(let a=0;a<2;a++){
+    try{
+      await waitNom();
+      const url=`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&countrycodes=ug&accept-language=en`;
+      const res=await fetch(url,{headers:{'User-Agent':'UgandaRealEstateMap/3.0'},signal:AbortSignal.timeout(9000)});
+      if(!res.ok){if(res.status>=429){await new Promise(r=>setTimeout(r,2500));continue;}geoCache.set(key,null);return null;}
+      const data=await res.json();
+      for(const p of(data||[])){
+        const lat=parseFloat(p.lat),lng=parseFloat(p.lon);
+        if(isFinite(lat)&&isFinite(lng)&&lat>=-2&&lat<=5&&lng>=29.5&&lng<=35.1){
+          const r={lat,lng,source:'osm',display:p.display_name};geoCache.set(key,r);return r;
+        }
+      }
+      geoCache.set(key,null);return null;
+    }catch(e){if(a<1){await new Promise(r=>setTimeout(r,1500));continue;}return null;}
+  }
+  return null;
+}
+async function geocode(village,district){
+  if(!village)return null;
+  const v=village.trim();
+  const loc=localGeocode(v+' '+district)||localGeocode(v);
+  if(loc)return loc;
+  let r=await nominatim(`${v}, ${district}, Uganda`);if(r)return r;
+  const cl=v.replace(/\s+(district|sub.?county|village|town|city|parish|ward|division|area|estate|zone)$/i,'').trim();
+  if(cl&&cl!==v&&cl.length>2){r=await nominatim(`${cl}, ${district}, Uganda`);if(r)return r;}
+  const fw=v.split(/\s+/)[0];
+  if(fw&&fw.length>3&&fw!==cl){r=await nominatim(`${fw}, ${district}, Uganda`);if(r)return r;}
+  return await nominatim(`${v}, Uganda`);
+}
+
+// ═══════════════════════════════════
+// PARSER
+// ═══════════════════════════════════
+const SZ=[
+  {re:/([\d.]+)\s*(?:x|X|by|×)\s*([\d.]+)\s*(?:m|meters?|metres?|ft|feet)?/i,t:'dim'},
+  {re:/([\d.]+)\s*(?:acres?|acre)/i,t:'ac'},
+  {re:/half\s*(?:an?\s*)?acres?/i,t:'hac'},
+  {re:/([\d.]+)\s*(?:sqm|sq\.?\s*m|m²|square\s*met)/i,t:'sqm'},
+  {re:/([\d.]+)\s*(?:hectares?|ha)\b/i,t:'ha'},
+  {re:/([\d.]+)\s*decimals?/i,t:'dec'},
+];
+function parseSize(t){
+  for(const{re,t:tp}of SZ){re.lastIndex=0;const m=re.exec(t);if(!m)continue;
+    if(tp==='hac')return{sqm:2023,d:'0.5 acres'};
+    if(tp==='dim'){const a=parseFloat(m[1]),b=parseFloat(m[2]);if(a>0&&b>0){const ft=/ft|feet/i.test(m[0]);const s=ft?Math.round(a*b*.0929):Math.round(a*b);return{sqm:s,d:ft?`${a}×${b}ft`:`${a}×${b}m`};}}
+    if(tp==='ac'){const v=parseFloat(m[1]);if(v>0)return{sqm:Math.round(v*4047),d:`${v} acre${v!==1?'s':''}`};}
+    if(tp==='sqm'){const v=parseFloat(m[1]);if(v>0)return{sqm:Math.round(v),d:`${Math.round(v)}m²`};}
+    if(tp==='ha'){const v=parseFloat(m[1]);if(v>0)return{sqm:Math.round(v*10000),d:`${v}ha`};}
+    if(tp==='dec'){const v=parseFloat(m[1]);if(v>0)return{sqm:Math.round(v*405),d:`${v} decimal${v!==1?'s':''}`};}
+  }
+  return{sqm:0,d:''};
+}
+const PR=[
+  {re:/([\d,.]+)\s*billion?\b/i,m:1000},{re:/([\d,.]+)\s*(?:million|m)\b/i,m:1},
+  {re:/(?:ugx|shs?\.?)\s*([\d,]+)/i,m:null},{re:/\b(\d{7,})\b/,m:null},
+];
+function parsePrice(t){
+  const s=t.toLowerCase().replace(/,/g,'').replace(/\s+/g,' ');
+  for(const{re,m}of PR){re.lastIndex=0;const x=re.exec(s);if(!x||!x[1])continue;
+    const v=parseFloat(x[1].replace(/,/g,''));if(!v||v<=0)continue;
+    if(m!==null)return Math.round(v*m*100)/100;
+    return v>=10000000?Math.round(v/1000000*100)/100:v>10000?Math.round(v/1000000*100)/100:v;
+  }
+  return 0;
+}
+const PH=[/(?:\+?256[\s-]?\(?0?\)?[\s-]?\d{2}[\s-]?\d{3}[\s-]?\d{4})/,/07\d{2}[\s-]?\d{3}[\s-]?\d{3,4}/,/\+256\d{9}/];
+function extractPhone(t){for(const p of PH){const m=t.match(p);if(m)return m[0].replace(/[\s()-]/g,'');}return '';}
+const BADS=new Set(['me','us','now','today','for','the','this','that','and','or','him','her','you','more','info','details','free','sale','rent','land','plot','acre','acres','million','size','price','contact','call','next','area','agent']);
+function extractAgent(t){
+  const pats=[/(?:call|contact|whatsapp|reach)\s+(?:me\s+|us\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i,
+    /(?:agent|realtor|broker|owner)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i,
+    /(?:contact|call)\s+([A-Z][a-z]+)\s+on\s+07/i];
+  for(const p of pats){const m=t.match(p);if(m&&m[1]){const n=m[1].trim();if(n.length>=2&&/^[A-Z]/.test(n)&&!BADS.has(n.toLowerCase())&&!/\d/.test(n))return n;}}
+  return '';
+}
+const LOC_PREPS=[
+  /\b(?:in|at|located\s+in|situated\s+in)\s+([A-Z][\w\s,.–-]{1,50}?)(?=\s+(?:at\s+\d|for\s+|\(|\d|per\s+acre|negotiable|\.|,|$))/i,
+  /\b(?:plot\s+in|land\s+in|house\s+in|property\s+in|acres?\s+in|acres?\s+at)\s+([A-Z][\w\s,.–-]{1,50}?)(?=\s+(?:at|for|[\d(]|$|\.))/i,
+];
+const COMMA_LOC=/\b([A-Z][\w\s]{2,30}?),\s*(Gulu|Nwoya|Amuru|Omoro|Pader|Kampala|Wakiso|Mukono|Entebbe|Jinja|Mbarara|Arua|Lira|Soroti|Mbale|Masaka|Fort\s+Portal)\b/i;
+const STRIP=/\s*(district|sub\s*county|village|town|city|parish|ward|division)$/i;
+
+function extractLoc(txt,fb){
+  const lo=txt.toLowerCase();
+  let village='',district=null;
+  for(const p of LOC_PREPS){const m=p.exec(txt);if(m&&m[1]){const c=m[1].trim().replace(/\s+/g,' ').replace(STRIP,'').trim();if(c.length>1&&/^[A-Z]/.test(c)){village=c;break;}}}
+  if(!village){const m=COMMA_LOC.exec(txt);if(m&&m[1])village=m[1].trim();}
+  if(!village){const ns=Object.keys(UG_LOC).sort((a,b)=>b.length-a.length);for(const n of ns){if(n.length<3)continue;if(lo.includes(n)){village=n[0].toUpperCase()+n.slice(1);break;}}}
+  district=ALL_DIST.find(d=>lo.includes(d.toLowerCase().replace(' central','')))||null;
+  if(!district){for(const[re,d]of DIST_RE){if(re.test(txt)){district=d;break;}}}
+  return{village,district:district||fb};
+}
+
+function inferInterest(price,area){
+  if(!price||price<=0)return'medium';
+  const w=WEIGHTS[area]||0.7;const adj=price/w;
+  return adj>=180?'high':adj>=80?'medium':'low';
+}
+
+function genTitle(village,district,sqm){
+  const loc=village||district||'Uganda';
+  if(!sqm||sqm<=0)return`Land in ${loc}`;
+  if(sqm>=4047){const a=Math.round(sqm/4047*10)/10;return`${a} acre${a!==1?'s':''} in ${loc}`;}
+  return`${Math.round(sqm)}m² plot in ${loc}`;
+}
+
+const SOLD_RE=/\b(sold|taken|booked|reserved|unavailable|not\s+available)\b/i;
+const PROP_RE=/(?:million|ugx|shs|acres?|sqm|m²|\d+\s*[x×]\s*\d+|\d{7,}|plot|land|house|property|for\s+sale|for\s+rent)/i;
+const FALSE_LINE=/^(hi|hello|good\s+morning|thank|greet|bye|\d+\.$|no\.|@)/i;
+
+function isPropBlock(t){
+  if(!t||t.length<15)return false;
+  if(FALSE_LINE.test(t.trim()))return false;
+  if(!/\d/.test(t))return false;
+  return PROP_RE.test(t.toLowerCase());
+}
+
+function splitBlocks(raw){
+  const lines=raw.split(/\r?\n/);
+  const blocks=[];let cur='';
+  for(const line of lines){
+    const t=line.trim();
+    if(!t){if(cur.trim()){blocks.push(cur.trim());cur='';}continue;}
+    const isStart=/^[•▪*\-✓✅🔹➤►]\s/.test(t)||/^\d{1,2}[.)]\s/.test(t)||
+      /^(land|plot|for\s+sale|prime|residential|commercial|house|acre|building)/i.test(t)||
+      (()=>{const hasP=/(?:million|ugx|shs|\d+\s*m\b|\d{7,})/i.test(t);
+             const hasS=/(?:acres?|sqm|m²|\d+\s*[x×]\s*\d+)/i.test(t);
+             const hasL=/\b(?:in|at|located|situated|near)\s+[A-Z]/i.test(t);
+             return [hasP,hasS,hasL].filter(Boolean).length>=2;})();
+    if(isStart&&cur.length>15){blocks.push(cur.trim());cur=t;}
+    else{cur=cur?cur+' '+t:t;}
+  }
+  if(cur.trim())blocks.push(cur.trim());
+  return blocks.filter(isPropBlock);
+}
+
+function parseFull(txt,fb='Gulu'){
+  const{village,district}=extractLoc(txt,fb);
+  const price=parsePrice(txt);
+  const{sqm,d:sizeDisplay}=parseSize(txt);
+  const status=SOLD_RE.test(txt)?'sold':'unsold';
+  const phone=extractPhone(txt);
+  const agent=extractAgent(txt);
+  const dist=district||fb;
+  return{village,district:dist,price,sqm,sizeDisplay,status,phone,agent,
+    interest:price>0?inferInterest(price,dist):'medium',
+    title:genTitle(village,dist,sqm)};
+}
+
+// ═══════════════════════════════════
+// LEARNING ENGINE
+// ═══════════════════════════════════
+const MK='ugRE_mem_v5',SK='ugRE_v5';
+let brain=loadBrain();
+function loadBrain(){try{const s=localStorage.getItem(MK);if(s)return JSON.parse(s);}catch{}
+  return{patterns:{},priceRanges:{},marketTrends:{},geoCache:{},count:0,qscore:0};}
+function saveBrain(){try{localStorage.setItem(MK,JSON.stringify(brain));}catch{}}
+
+function qScore(l){
+  let s=1;
+  if(l.priceUGX>50)s+=.3;if(l.priceUGX>100)s+=.2;
+  if(l.size&&l.size!=='unknown')s+=.3;if(l.agent)s+=.1;if(l.contact)s+=.1;
+  if(l.village)s+=.2;if(l._geocoded)s+=.3;if(l._geocodeSource==='osm')s+=.15;
+  return Math.min(s,2);
+}
+
+function brainLearn(l){
+  const price=l.priceUGX||0;if(!price)return;
+  const area=l.district||'Gulu';const qw=qScore(l);
+  const pr=brain.priceRanges;
+  if(!pr[area])pr[area]={min:price,max:price,avg:price,count:1,total:price};
+  else{pr[area].total=(pr[area].total||pr[area].avg*pr[area].count)+price;pr[area].count++;
+    pr[area].min=Math.min(pr[area].min,price);pr[area].max=Math.max(pr[area].max,price);pr[area].avg=pr[area].total/pr[area].count;}
+  const mt=brain.marketTrends;
+  if(!mt[area])mt[area]={prices:[],trend:'stable'};
+  mt[area].prices.push(price);if(mt[area].prices.length>20)mt[area].prices.shift();
+  const ps=mt[area].prices;
+  if(ps.length>=5){const h=Math.floor(ps.length/2);const f=ps.slice(0,h).reduce((a,b)=>a+b,0)/h;const s=ps.slice(h).reduce((a,b)=>a+b,0)/(ps.length-h);mt[area].trend=s>f*1.05?'rising':s<f*0.95?'falling':'stable';}
+  const words=(l.title+' '+(l.village||'')).toLowerCase().split(/\s+/).filter(w=>w.length>3);
+  for(const w of words){if(!brain.patterns[w])brain.patterns[w]={count:0,districts:{}};brain.patterns[w].count++;brain.patterns[w].districts[area]=(brain.patterns[w].districts[area]||0)+1;}
+  if(l.village&&l.lat&&l._geocoded)brain.geoCache[l.village.toLowerCase()]={lat:l.lat,lng:l.lng,district:area};
+  brain.count=(brain.count||0)+1;brain.qscore=Math.min(1,((brain.qscore||0)*(brain.count-1)+qw)/brain.count);
+  saveBrain();
+}
+
+function smartInterest(price,area){
+  const pr=brain.priceRanges[area];
+  if(pr&&pr.count>=5){const r=price/(pr.avg||1);return r<=0.7?'high':r<=1.2?'medium':'low';}
+  return inferInterest(price,area);
+}
+
+// ═══════════════════════════════════
+// STATE
+// ═══════════════════════════════════
+let listings=[],unverified=[],parseQueue=[],cancelTok={c:false};
+function persist(){try{localStorage.setItem(SK,JSON.stringify({listings,unverified}));}catch{}}
+function loadPersist(){try{const s=localStorage.getItem(SK);if(s){const d=JSON.parse(s);listings=d.listings||[];unverified=d.unverified||[];}}catch{}}
+
+// ═══════════════════════════════════
+// UI
+// ═══════════════════════════════════
+function goTab(id){
+  document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
+  document.getElementById('pane-'+id).classList.add('on');
+  const ti=['parse','map','records','analytics','memory'].indexOf(id);
+  document.querySelectorAll('.tab')[ti].classList.add('on');
+  if(id==='map')setTimeout(()=>{initMap();renderMap();},60);
+  if(id==='records')renderRecords();
+  if(id==='analytics')renderAnalytics();
+  if(id==='memory')renderMemory();
+}
+function setMsg(id,txt,tp='info'){const e=document.getElementById(id);e.textContent=txt;e.className='msg '+tp;}
+function setProg(p){
+  document.getElementById('parse-prog').style.display=p>0?'block':'none';
+  document.getElementById('parse-bar').style.width=p+'%';
+}
+function updateHeader(){
+  const osm=listings.filter(l=>l._geocodeSource==='osm').length;
+  const loc=listings.filter(l=>l._geocodeSource==='local').length;
+  const unv=unverified.length;
+  document.getElementById('hdr-stats').innerHTML=
+    `<span>${listings.length} listings</span>`+
+    (osm?`<span style="color:var(--green)">● ${osm} OSM</span>`:'')+
+    (loc?`<span style="color:var(--blue)">● ${loc} local</span>`:'')+
+    (unv?`<span style="color:var(--red)">⚠ ${unv} unverified</span>`:'');
+}
+function srcBadge(l){
+  if(l._geocodeSource==='osm')return'<span class="badge b-osm">OSM</span>';
+  if(l._geocodeSource==='local')return'<span class="badge b-loc">local</span>';
+  return'<span class="badge b-unv">unverified</span>';
+}
+
+// ═══════════════════════════════════
+// PARSE FLOW
+// ═══════════════════════════════════
+async function runParse(){
+  const raw=document.getElementById('raw-text').value.trim();
+  if(!raw){setMsg('parse-msg','Paste listing text or upload a file first','err');return;}
+  cancelTok={c:false};
+  const btn=document.getElementById('btn-parse');btn.disabled=true;btn.textContent='Parsing…';
+  setProg(5);setMsg('parse-msg','Splitting and filtering text…','info');
+  const fb=document.getElementById('fallback-dist').value;
+  const blocks=splitBlocks(raw);
+  if(!blocks.length){setMsg('parse-msg','No valid property listings detected. Ensure text includes size, location and price.','err');done();return;}
+  setMsg('parse-msg',`Found ${blocks.length} listing${blocks.length!==1?'s':''}. Geocoding via OSM…`,'info');
+  const results=[],newUnv=[];
+  for(let i=0;i<blocks.length;i++){
+    if(cancelTok.c)break;
+    const block=blocks[i];
+    setProg(10+Math.round((i/blocks.length)*80));
+    const info=parseFull(block,fb);
+    if(info.price>0)info.interest=smartInterest(info.price,info.district);
+    setMsg('parse-msg',`Geocoding ${i+1}/${blocks.length}: ${(info.village||info.district).slice(0,30)}…`,'info');
+    let lat=0,lng=0,geo=false,src='fallback';
+    if(info.village){
+      const cached=brain.geoCache[info.village.toLowerCase()];
+      if(cached){lat=cached.lat;lng=cached.lng;geo=true;src='local';}
+      if(!geo){const lc=localGeocode(info.village+' '+info.district)||localGeocode(info.village);if(lc){lat=lc.lat;lng=lc.lng;geo=true;src='local';}}
+      if(!geo){const gc=await geocode(info.village,info.district);if(cancelTok.c)break;
+        if(gc){lat=gc.lat;lng=gc.lng;geo=true;src=gc.source;}
+        else newUnv.push({id:Date.now()+Math.random(),village:info.village,district:info.district,originalText:block.slice(0,120)});}
+    }
+    if(!lat||!lng||!isFinite(lat)||!isFinite(lng)){const c=DIST[info.district]||DIST['Gulu'];lat=c.lat;lng=c.lng;src='fallback';geo=false;}
+    results.push({id:Date.now()+Math.random()+i,title:info.title,priceUGX:info.price||0,
+      district:info.district,village:info.village||'',size:info.sizeDisplay||'unknown',
+      status:info.status,interest:info.interest,agent:info.agent||'',contact:info.phone||'',
+      notes:block.slice(0,200),lat,lng,_geocoded:geo,_geocodeSource:src});
+  }
+  if(cancelTok.c){done();return;}
+  results.sort((a,b)=>a._geocoded===b._geocoded?b.priceUGX-a.priceUGX:a._geocoded?-1:1);
+  parseQueue=results;unverified=[...unverified,...newUnv];persist();
+  setProg(100);setTimeout(()=>setProg(0),700);
+  const osmC=results.filter(r=>r._geocodeSource==='osm').length;
+  const locC=results.filter(r=>r._geocodeSource==='local').length;
+  setMsg('parse-msg',`Parsed ${results.length} listing${results.length!==1?'s':''} — ${osmC} OSM, ${locC} local, ${newUnv.length} unverified`,results.length>0?'ok':'err');
+  renderQueue();updateHeader();done();
+}
+function done(){const b=document.getElementById('btn-parse');b.disabled=false;b.textContent='Parse & Geocode';}
+
+async function onFile(e){
+  const f=e.target.files[0];if(!f)return;
+  const ext=f.name.split('.').pop().toLowerCase();
+  if(ext!=='txt'&&ext!=='csv'){setMsg('parse-msg','Only .txt and .csv files accepted','err');e.target.value='';return;}
+  if(f.size>2000000){setMsg('parse-msg','File too large (max 2 MB)','err');e.target.value='';return;}
+  let txt=await f.text();
+  if(ext==='csv')txt=txt.split(/\r?\n/).filter(l=>l.trim()).map(l=>l.split(',').map(c=>c.replace(/^"|"$/g,'').trim()).join(' ')).join('\n');
+  document.getElementById('raw-text').value=txt;
+  setMsg('parse-msg',`Loaded ${f.name} (${txt.split('\n').length} lines) — click Parse & Geocode`,'info');
+  e.target.value='';
+}
+
+function renderQueue(){
+  const el=document.getElementById('q-list'),btn=document.getElementById('q-add');
+  document.getElementById('q-count').textContent=parseQueue.length?`(${parseQueue.length})`:'';
+  if(!parseQueue.length){el.innerHTML='<span style="color:var(--t3)">No listings in queue.</span>';btn.style.display='none';return;}
+  const v=parseQueue.filter(l=>l._geocoded),u=parseQueue.filter(l=>!l._geocoded);
+  const row=(l,i)=>`<div class="queue-item"><div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
+    <div style="min-width:0;flex:1"><div style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.title}</div>
+    <div style="color:var(--t2);margin-top:2px">${l.size} · ${l.district}${l.village?' · '+l.village:''} ${srcBadge(l)}</div></div>
+    <div style="text-align:right;flex-shrink:0"><div style="font-weight:600">${l.priceUGX>0?'UGX '+l.priceUGX+'M':'—'}</div>
+    <button onclick="addOneQ(${i})" style="font-size:11px;padding:3px 8px;margin-top:4px">Add</button></div></div></div>`;
+  let html='';
+  if(v.length){html+=`<div style="font-size:11px;color:var(--green);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">✓ OSM verified (${v.length})</div>`;v.forEach(l=>html+=row(l,parseQueue.indexOf(l)));}
+  if(v.length&&u.length)html+=`<div style="height:1px;background:var(--border);margin:10px 0;position:relative"><span style="position:absolute;left:50%;transform:translateX(-50%);top:-9px;background:var(--surface);padding:0 8px;font-size:10px;color:var(--t3)">not found on OSM</span></div>`;
+  if(u.length){html+=`<div style="font-size:11px;color:var(--red);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin:10px 0 6px">⚠ Unverified (${u.length})</div>`;u.forEach(l=>html+=row(l,parseQueue.indexOf(l)));}
+  el.innerHTML=html;btn.style.display='block';
+}
+function addOneQ(i){const l=parseQueue[i];if(!l)return;brainLearn(l);listings.unshift(l);parseQueue.splice(i,1);persist();updateHeader();renderQueue();}
+function addAllQueue(){parseQueue.forEach(l=>{brainLearn(l);listings.unshift(l);});parseQueue=[];persist();updateHeader();renderQueue();setMsg('parse-msg','Added to map — switch to Map or Records tab.','ok');}
+function clearAll(){if(!confirm('Delete ALL listings?'))return;listings=[];unverified=[];parseQueue=[];persist();updateHeader();renderQueue();renderRecords();if(mapCtx)renderMap();setMsg('parse-msg','All cleared','info');}
+
+// ═══════════════════════════════════
+// CANVAS MAP ENGINE
+// ═══════════════════════════════════
+let mapCtx=null,mapCanvas=null;
+// Viewport state: centre in [lat,lng], scale pixels-per-degree
+let vp={lat:2.0,lng:32.0,scale:300,w:800,h:460};
+let drag={active:false,sx:0,sy:0,slat:0,slng:0};
+let hoveredMarker=null;
+
+const MAP_TILES=[];// pure canvas, no tile loading
+
+function latLngToXY(lat,lng){
+  return{
+    x:Math.round(vp.w/2+(lng-vp.lng)*vp.scale),
+    y:Math.round(vp.h/2-(lat-vp.lat)*vp.scale)
+  };
+}
+function xyToLatLng(x,y){
+  return{lat:vp.lat-(y-vp.h/2)/vp.scale,lng:vp.lng+(x-vp.w/2)/vp.scale};
+}
+
+function initMap(){
+  if(mapCtx)return;
+  mapCanvas=document.getElementById('map-canvas');
+  const wrap=document.getElementById('map-wrap');
+  mapCanvas.width=wrap.clientWidth||800;
+  mapCanvas.height=460;
+  vp.w=mapCanvas.width;vp.h=mapCanvas.height;
+  mapCtx=mapCanvas.getContext('2d');
+  // Interactions
+  mapCanvas.addEventListener('mousedown',e=>{drag={active:true,sx:e.clientX,sy:e.clientY,slat:vp.lat,slng:vp.lng};mapCanvas.classList.add('dragging');});
+  window.addEventListener('mouseup',()=>{drag.active=false;mapCanvas.classList.remove('dragging');});
+  window.addEventListener('mousemove',e=>{
+    if(drag.active){vp.lat=drag.slat+(e.clientY-drag.sy)/vp.scale;vp.lng=drag.slng-(e.clientX-drag.sx)/vp.scale;renderMap();return;}
+    const r=mapCanvas.getBoundingClientRect();
+    const mx=e.clientX-r.left,my=e.clientY-r.top;
+    const hit=hitTest(mx,my);
+    if(hit!==hoveredMarker){hoveredMarker=hit;showTooltip(hit,e.clientX,e.clientY);renderMap();}
+    else if(hit){showTooltip(hit,e.clientX,e.clientY);}
+  });
+  mapCanvas.addEventListener('wheel',e=>{e.preventDefault();const f=e.deltaY>0?0.85:1.18;vp.scale=Math.max(50,Math.min(50000,vp.scale*f));renderMap();},{passive:false});
+  mapCanvas.addEventListener('click',e=>{const r=mapCanvas.getBoundingClientRect();const hit=hitTest(e.clientX-r.left,e.clientY-r.top);if(hit)showPopup(hit);});
+  mapCanvas.addEventListener('mouseleave',()=>{hoveredMarker=null;document.getElementById('map-tooltip').style.display='none';renderMap();});
+  window.addEventListener('resize',()=>{mapCanvas.width=mapCanvas.parentElement.clientWidth||800;vp.w=mapCanvas.width;renderMap();});
+  mapFitAll();
+}
+
+function markerColor(l){
+  if(l.status==='sold')return'#f85149';
+  return l.interest==='high'?'#16a34a':l.interest==='medium'?'#eab308':'#3b82f6';
+}
+
+// Build sorted marker list for rendering (verified below, unverified above in z)
+function allMarkers(){
+  const v=listings.filter(l=>l._geocoded&&isFinite(l.lat)&&isFinite(l.lng));
+  const u=listings.filter(l=>!l._geocoded&&isFinite(l.lat)&&isFinite(l.lng)&&l.village);
+  // district-centre fallback unverified
+  const du=[...unverified.map((uv,i)=>{
+    const c=DIST[uv.district]||DIST['Gulu'];
+    const seed=i*7919;
+    return{...uv,lat:c.lat+((seed%200-100)/5000),lng:c.lng+((seed*6271%200-100)/5000),_geocoded:false,_geocodeSource:'fallback',priceUGX:0,status:'unsold',interest:'low',title:uv.village,size:'',agent:'',contact:''};
+  })];
+  return{verified:v,unverified:[...u,...du]};
+}
+
+function drawMap(){
+  const ctx=mapCtx;
+  const W=vp.w,H=vp.h;
+  // Dark background with subtle grid
+  ctx.fillStyle='#1a2035';ctx.fillRect(0,0,W,H);
+
+  // Grid lines (lat/lng)
+  ctx.strokeStyle='rgba(255,255,255,0.04)';ctx.lineWidth=1;
+  const latStep=computeGridStep(H/vp.scale);
+  const lngStep=computeGridStep(W/vp.scale);
+  const latMin=vp.lat-H/2/vp.scale,latMax=vp.lat+H/2/vp.scale;
+  const lngMin=vp.lng-W/2/vp.scale,lngMax=vp.lng+W/2/vp.scale;
+  for(let la=Math.floor(latMin/latStep)*latStep;la<=latMax;la+=latStep){
+    const{y}=latLngToXY(la,0);ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();
+  }
+  for(let ln=Math.floor(lngMin/lngStep)*lngStep;ln<=lngMax;ln+=lngStep){
+    const{x}=latLngToXY(0,ln);ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();
+  }
+
+  // Uganda approximate outline (simplified polygon)
+  drawUganda(ctx);
+
+  const{verified,unverified:unv}=allMarkers();
+
+  // OSM divider line
+  if(verified.length>0&&unv.length>0){
+    const vLats=verified.map(l=>l.lat).sort((a,b)=>a-b);
+    const midLat=vLats[Math.floor(vLats.length/2)];
+    const{y:dy}=latLngToXY(midLat,0);
+    ctx.save();ctx.strokeStyle='rgba(255,255,255,0.25)';ctx.lineWidth=1.5;ctx.setLineDash([8,6]);
+    ctx.beginPath();ctx.moveTo(0,dy+30);ctx.lineTo(W,dy+30);ctx.stroke();
+    ctx.setLineDash([]);ctx.restore();
+    ctx.fillStyle='rgba(255,255,255,0.35)';ctx.font='10px system-ui';ctx.textAlign='center';
+    ctx.fillText('↑ OSM verified  ·  unverified ↓',W/2,dy+24);
+  }
+
+  // Draw unverified (dashed circles)
+  for(const l of unv){
+    const{x,y}=latLngToXY(l.lat,l.lng);
+    if(x<-20||x>W+20||y<-20||y>H+20)continue;
+    ctx.save();ctx.strokeStyle='#dc2626';ctx.fillStyle='rgba(252,165,165,0.35)';
+    ctx.lineWidth=l===hoveredMarker?2.5:1.5;ctx.setLineDash([4,4]);
+    ctx.beginPath();ctx.arc(x,y,l===hoveredMarker?9:7,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.setLineDash([]);ctx.restore();
+  }
+
+  // Draw verified (pin markers)
+  for(const l of verified){
+    const{x,y}=latLngToXY(l.lat,l.lng);
+    if(x<-20||x>W+20||y<-20||y>H+20)continue;
+    const col=markerColor(l);
+    const isHov=l===hoveredMarker;const r=isHov?9:7;
+    // Pin body
+    ctx.save();
+    ctx.fillStyle=col;ctx.strokeStyle='#fff';ctx.lineWidth=isHov?2:1.5;
+    ctx.beginPath();
+    ctx.arc(x,y-r,r,0,Math.PI*2);ctx.fill();ctx.stroke();
+    // Pin tail
+    ctx.fillStyle=col;ctx.beginPath();ctx.moveTo(x-3,y-r+2);ctx.lineTo(x+3,y-r+2);ctx.lineTo(x,y+4);ctx.closePath();ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.3)';ctx.lineWidth=0.5;ctx.stroke();
+    // Inner dot
+    ctx.fillStyle='rgba(255,255,255,0.9)';ctx.beginPath();ctx.arc(x,y-r,r*0.38,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  }
+
+  // Scale bar
+  drawScaleBar(ctx,W,H);
+}
+
+function computeGridStep(degSpan){
+  const steps=[0.01,0.02,0.05,0.1,0.2,0.5,1,2,5,10];
+  return steps.find(s=>degSpan/s<8)||10;
+}
+
+function drawUganda(ctx){
+  // Simplified Uganda border (approx convex hull, good enough for context)
+  const pts=[
+    [4.22,29.57],[4.08,30.46],[3.76,30.94],[3.50,31.46],[3.68,31.96],
+    [3.80,32.21],[3.85,32.89],[3.63,33.28],[3.31,33.73],[2.82,34.11],
+    [2.45,34.14],[1.76,34.07],[1.21,34.14],[0.77,34.14],[0.37,34.08],
+    [-0.05,33.95],[-0.53,33.74],[-1.12,33.63],[-1.48,31.97],[-1.48,30.76],
+    [-1.40,30.47],[-1.07,29.92],[-0.50,29.57],[-0.11,29.57],[0.26,29.58],
+    [0.79,29.63],[1.22,30.09],[1.67,30.26],[2.34,30.75],[2.73,30.52],
+    [2.87,30.17],[3.34,29.95],[3.76,29.68],[4.22,29.57]
+  ];
+  ctx.save();
+  ctx.beginPath();
+  pts.forEach(([la,ln],i)=>{const{x,y}=latLngToXY(la,ln);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
+  ctx.closePath();
+  ctx.fillStyle='rgba(30,50,90,0.45)';ctx.fill();
+  ctx.strokeStyle='rgba(100,150,255,0.25)';ctx.lineWidth=1.5;ctx.stroke();
+  ctx.restore();
+}
+
+function drawScaleBar(ctx,W,H){
+  const degreesPerPx=1/vp.scale;
+  const kmPerDeg=111;
+  const barKm=[0.1,0.2,0.5,1,2,5,10,20,50,100,200,500].find(k=>k/kmPerDeg/degreesPerPx<120)||500;
+  const barPx=barKm/kmPerDeg/degreesPerPx;
+  const x=14,y=H-16;
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(x-2,y-14,barPx+4,18);
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();
+  ctx.moveTo(x,y);ctx.lineTo(x+barPx,y);
+  ctx.moveTo(x,y-8);ctx.lineTo(x,y);
+  ctx.moveTo(x+barPx,y-8);ctx.lineTo(x+barPx,y);
+  ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='10px system-ui';ctx.textAlign='center';
+  ctx.fillText(barKm>=1?barKm+'km':barKm*1000+'m',x+barPx/2,y-2);
+  ctx.restore();
+}
+
+function renderMap(){
+  if(!mapCtx)return;
+  drawMap();
+
+  // Update stats bar
+  const{verified,unverified:unv}=allMarkers();
+  const osmC=verified.filter(l=>l._geocodeSource==='osm').length;
+  const locC=verified.filter(l=>l._geocodeSource==='local').length;
+  document.getElementById('map-stats-bar').innerHTML=[
+    osmC?`<span style="background:var(--gbg);color:var(--gdk);padding:4px 10px;border-radius:99px">● ${osmC} OSM</span>`:'',
+    locC?`<span style="background:var(--bbg);color:var(--bdk);padding:4px 10px;border-radius:99px">● ${locC} local</span>`:'',
+    unv.length?`<span style="background:var(--rbg);color:var(--rdk);padding:4px 10px;border-radius:99px">⚠ ${unv.length} unverified</span>`:'',
+  ].join('');
+
+  // Unverified panel
+  const uvP=document.getElementById('map-unv-panel');
+  if(unverified.length>0){
+    uvP.innerHTML=`<div class="unv-panel"><div class="unv-ph" onclick="toggleUnv(this)">
+      <span style="font-size:13px;font-weight:600;color:var(--red)">⚠ Not found on OSM (${unverified.length})</span>
+      <span style="font-size:12px;color:var(--t2)">Show ▼</span></div>
+      <div class="unv-pb">${unverified.map(u=>`<div class="unv-item"><b>${u.village}</b> · ${u.district}<br><span style="color:var(--t3)">"${(u.originalText||'').slice(0,70)}"</span></div>`).join('')}</div></div>`;
+  }else uvP.innerHTML='';
+}
+
+function hitTest(mx,my){
+  const{verified,unverified:unv}=allMarkers();
+  const all=[...verified,...unv];
+  for(const l of all){
+    const{x,y}=latLngToXY(l.lat,l.lng);
+    const r=l._geocoded?14:10;
+    const pinY=l._geocoded?y-7:y;
+    if(Math.sqrt((mx-x)**2+(my-pinY)**2)<r)return l;
+  }
+  return null;
+}
+
+function showTooltip(l,cx,cy){
+  const tt=document.getElementById('map-tooltip');
+  if(!l){tt.style.display='none';return;}
+  const src=l._geocodeSource==='osm'?'✓ OSM':l._geocodeSource==='local'?'📍 local':'⚠ unverified';
+  tt.innerHTML=`<b>${l.title||l.village}</b><br>${l.priceUGX>0?'UGX '+l.priceUGX+'M<br>':''}`+
+    `${l.size&&l.size!=='unknown'?l.size+' · ':''}<span style="opacity:.7">${l.district}</span><br>`+
+    `<span style="font-size:10px;opacity:.55">${src}${l.lat?'  '+l.lat.toFixed(4)+','+l.lng.toFixed(4):''}</span>`;
+  const wrap=document.getElementById('map-wrap');
+  const wr=wrap.getBoundingClientRect();
+  let tx=cx-wr.left+12,ty=cy-wr.top-10;
+  if(tx+230>vp.w)tx=cx-wr.left-240;
+  tt.style.left=tx+'px';tt.style.top=ty+'px';tt.style.display='block';
+}
+
+function showPopup(l){
+  alert(`${l.title}\n${l.priceUGX>0?'UGX '+l.priceUGX+'M\n':''}${l.size||''}\n${l.district}${l.village?' · '+l.village:''}\n${l.agent?'Agent: '+l.agent+'\n':''}${l.contact||''}\nSource: ${l._geocodeSource}`);
+}
+
+function toggleUnv(hdr){
+  const b=hdr.nextElementSibling;const lb=hdr.querySelector('span:last-child');
+  b.style.display=b.style.display==='block'?'none':'block';
+  lb.textContent=b.style.display==='block'?'Hide ▲':'Show ▼';
+}
+
+function mapZoom(f){vp.scale=Math.max(50,Math.min(50000,vp.scale*f));renderMap();}
+function mapReset(){vp={lat:2.0,lng:32.0,scale:300,w:vp.w,h:vp.h};renderMap();}
+function mapFitAll(){
+  const{verified,unverified:unv}=allMarkers();
+  const all=[...verified,...unv];
+  if(!all.length){mapReset();return;}
+  const lats=all.map(l=>l.lat),lngs=all.map(l=>l.lng);
+  const la0=Math.min(...lats),la1=Math.max(...lats),ln0=Math.min(...lngs),ln1=Math.max(...lngs);
+  const dla=Math.max(la1-la0,0.1),dln=Math.max(ln1-ln0,0.1);
+  vp.lat=(la0+la1)/2;vp.lng=(ln0+ln1)/2;
+  vp.scale=Math.min((vp.w*0.8)/dln,(vp.h*0.8)/dla,5000);
+  renderMap();
+}
+
+async function mapSearch(){
+  const q=document.getElementById('map-q').value.trim();if(!q)return;
+  const lc=localGeocode(q);
+  if(lc){vp.lat=lc.lat;vp.lng=lc.lng;vp.scale=Math.max(vp.scale,800);renderMap();return;}
+  const r=await nominatim(q+', Uganda');
+  if(r){vp.lat=r.lat;vp.lng=r.lng;vp.scale=Math.max(vp.scale,800);renderMap();}
+  else alert(`"${q}" not found in Uganda`);
+}
+
+// ═══════════════════════════════════
+// RECORDS
+// ═══════════════════════════════════
+function renderRecords(){
+  const q=(document.getElementById('rec-q').value||'').toLowerCase();
+  const status=document.getElementById('rec-status').value;
+  const src=document.getElementById('rec-src').value;
+  const area=document.getElementById('rec-area').value;
+  const aEl=document.getElementById('rec-area');
+  const existing=new Set([...aEl.options].map(o=>o.value));
+  [...new Set(listings.map(l=>l.district).filter(Boolean))].sort().forEach(d=>{if(!existing.has(d)){const o=document.createElement('option');o.value=d;o.textContent=d;aEl.appendChild(o);}});
+  const f=listings.filter(l=>{
+    if(q&&![l.title||'',l.village||'',l.district||'',l.agent||''].some(s=>s.toLowerCase().includes(q)))return false;
+    if(status!=='all'&&l.status!==status)return false;
+    if(src!=='all'&&(l._geocodeSource||'fallback')!==src)return false;
+    if(area!=='all'&&l.district!==area)return false;
+    return true;
+  });
+  const v=f.filter(l=>l._geocoded),u=f.filter(l=>!l._geocoded);
+  document.getElementById('rec-empty').style.display=f.length===0?'block':'none';
+  document.getElementById('rec-div').style.display=(v.length>0&&u.length>0)?'block':'none';
+  const row=l=>`<div class="listing-row" onclick="focusMap('${l.id}')">
+    <div style="flex:1;min-width:0">
+      <div style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.title}</div>
+      <div style="font-size:11px;color:var(--t2);margin-top:2px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">
+        <span>${l.size}</span><span>·</span><span>${l.district}${l.village?' · <b>'+l.village+'</b>':''}</span>
+        ${srcBadge(l)}<span class="badge ${l.status==='sold'?'b-sold':'b-ok'}">${l.status}</span>
+        <span class="badge ${l.interest==='high'?'b-hi':l.interest==='low'?'b-lo':'b-med'}">${l.interest}</span>
+        ${l.agent?`<span style="color:var(--blue)">${l.agent}</span>`:''}
+      </div>
+    </div>
+    <div style="text-align:right;flex-shrink:0">
+      <div style="font-weight:600">${l.priceUGX>0?'UGX '+l.priceUGX+'M':'—'}</div>
+      <button class="danger" onclick="event.stopPropagation();delL('${l.id}')" style="font-size:11px;padding:2px 7px;margin-top:4px">✕</button>
+    </div>
+  </div>`;
+  document.getElementById('rec-osm').innerHTML=v.length?
+    `<div style="font-size:11px;font-weight:600;color:var(--green);text-transform:uppercase;letter-spacing:.05em;padding:10px 14px 4px">✓ OSM Verified — ${v.length}</div>`+v.map(row).join(''):'';
+  document.getElementById('rec-unv').innerHTML=u.length?
+    `<div style="font-size:11px;font-weight:600;color:var(--red);text-transform:uppercase;letter-spacing:.05em;padding:10px 14px 4px">⚠ Unverified — ${u.length}</div>`+u.map(row).join(''):'';
+}
+
+function focusMap(id){
+  const l=listings.find(x=>String(x.id)===String(id));if(!l)return;
+  goTab('map');
+  setTimeout(()=>{initMap();vp.lat=l.lat;vp.lng=l.lng;vp.scale=Math.max(vp.scale,2000);renderMap();},80);
+}
+function delL(id){listings=listings.filter(l=>String(l.id)!==String(id));persist();updateHeader();renderRecords();}
+
+// ═══════════════════════════════════
+// ANALYTICS
+// ═══════════════════════════════════
+function renderAnalytics(){
+  if(!listings.length){document.getElementById('an-stats').innerHTML='<p style="color:var(--t3);font-size:12px">No listings yet.</p>';return;}
+  const total=listings.length,sold=listings.filter(l=>l.status==='sold').length;
+  const osmV=listings.filter(l=>l._geocodeSource==='osm').length;
+  const wp=listings.filter(l=>l.priceUGX>0);
+  const avg=wp.length?Math.round(wp.reduce((s,l)=>s+l.priceUGX,0)/wp.length):0;
+  document.getElementById('an-stats').innerHTML=`
+    <div class="stat-box"><div class="stat-val">${total}</div><div class="stat-lbl">Total</div></div>
+    <div class="stat-box"><div class="stat-val">${sold}</div><div class="stat-lbl">Sold</div></div>
+    <div class="stat-box"><div class="stat-val">${total-sold}</div><div class="stat-lbl">Available</div></div>
+    <div class="stat-box"><div class="stat-val">${avg>0?avg+'M':'—'}</div><div class="stat-lbl">Avg UGX</div></div>
+    <div class="stat-box"><div class="stat-val">${osmV}</div><div class="stat-lbl">OSM verified</div></div>
+    <div class="stat-box"><div class="stat-val">${unverified.length}</div><div class="stat-lbl">Unverified</div></div>`;
+  const bd={};listings.forEach(l=>{if(!l.district)return;if(!bd[l.district])bd[l.district]={c:0,t:0,s:0};bd[l.district].c++;if(l.priceUGX>0)bd[l.district].t+=l.priceUGX;if(l.status==='sold')bd[l.district].s++;});
+  const de=Object.entries(bd).sort((a,b)=>b[1].c-a[1].c).slice(0,10);
+  const mc=Math.max(...de.map(([,v])=>v.c),1);
+  document.getElementById('an-dist').innerHTML=de.map(([d,v])=>`<div class="bar-row">
+    <div style="width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--t2)">${d}</div>
+    <div class="bar-track"><div class="bar-fill" style="width:${Math.round(v.c/mc*100)}%;background:#3b82f6"></div></div>
+    <div style="width:70px;text-align:right;font-size:11px">${v.c>0&&v.t>0?'~'+Math.round(v.t/v.c)+'M':v.c+' listings'}</div></div>`).join('');
+  const bi={high:0,medium:0,low:0};listings.forEach(l=>{if(bi[l.interest]!==undefined)bi[l.interest]++;});
+  const mi=Math.max(...Object.values(bi),1);
+  const ic={high:'#db2777',medium:'#d97706',low:'#3b82f6'};
+  document.getElementById('an-int').innerHTML=Object.entries(bi).map(([k,v])=>`<div class="bar-row">
+    <div style="width:60px;font-size:11px;color:var(--t2);text-transform:capitalize">${k}</div>
+    <div class="bar-track"><div class="bar-fill" style="width:${Math.round(v/mi*100)}%;background:${ic[k]}"></div></div>
+    <div style="width:30px;text-align:right;font-size:11px">${v}</div></div>`).join('');
+  const ins=[];
+  ins.push(`Sold rate: <b>${Math.round(sold/total*100)}%</b>`);
+  const rising=Object.entries(brain.marketTrends||{}).filter(([,v])=>v.trend==='rising').map(([k])=>k);
+  const falling=Object.entries(brain.marketTrends||{}).filter(([,v])=>v.trend==='falling').map(([k])=>k);
+  if(rising.length)ins.push(`Rising markets: <b>${rising.join(', ')}</b>`);
+  if(falling.length)ins.push(`Softening: <b>${falling.join(', ')}</b>`);
+  if(de[0])ins.push(`Most active: <b>${de[0][0]}</b> (${de[0][1].c} listings)`);
+  if(osmV>0)ins.push(`<b>${osmV}</b> listing${osmV!==1?'s':''} GPS-accurate via OSM`);
+  if(unverified.length>0)ins.push(`<b>${unverified.length}</b> location${unverified.length!==1?'s':''} could not be verified — map placement approximate`);
+  document.getElementById('an-ins').innerHTML=ins.map(i=>`<div style="padding:4px 0;border-bottom:1px solid var(--border)">• ${i}</div>`).join('');
+}
+
+// ═══════════════════════════════════
+// MEMORY
+// ═══════════════════════════════════
+function renderMemory(){
+  const d=Object.keys(brain.priceRanges||{});
+  document.getElementById('mem-status').innerHTML=`<div style="display:grid;gap:5px">
+    <div>Processed: <b>${brain.count||0} listings</b></div>
+    <div>Quality score: <b>${Math.round((brain.qscore||0)*100)}%</b></div>
+    <div>Districts learned: <b>${d.length}</b></div>
+    <div>Word patterns: <b>${Object.keys(brain.patterns||{}).length}</b></div>
+    <div>Geo cache: <b>${Object.keys(brain.geoCache||{}).length} locations</b></div>
+    <div>Market trends: <b>${Object.keys(brain.marketTrends||{}).length} areas</b></div>
+  </div>`+
+  (d.length?`<div style="margin-top:12px;font-size:12px;font-weight:600;margin-bottom:6px">Price ranges</div>`+
+  d.map(x=>{const p=brain.priceRanges[x];return`<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)"><span>${x}</span><span style="color:var(--t2)">${Math.round(p.min)}M – ${Math.round(p.max)}M (avg ${Math.round(p.avg)}M, ${p.count})</span></div>`;}).join(''):'');
+}
+function exportMem(){
+  const data=JSON.stringify({brain,listings,unverified},null,2);
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));
+  a.download='ugRealEstate_'+new Date().toISOString().slice(0,10)+'.json';a.click();
+}
+function importMem(){
+  const txt=document.getElementById('mem-import').value.trim();if(!txt){setMsg('mem-msg','Paste JSON first','err');return;}
+  try{const d=JSON.parse(txt);if(d.brain)brain={...brain,...d.brain};if(Array.isArray(d.listings)){listings=d.listings;persist();}if(Array.isArray(d.unverified))unverified=d.unverified;saveBrain();updateHeader();renderMemory();setMsg('mem-msg','Imported','ok');}
+  catch(e){setMsg('mem-msg','Invalid JSON: '+e.message,'err');}
+}
+function resetMem(){if(!confirm('Reset learning data?'))return;brain={patterns:{},priceRanges:{},marketTrends:{},geoCache:{},count:0,qscore:0};saveBrain();renderMemory();setMsg('mem-msg','Reset','ok');}
+
+// ═══════════════════════════════════
+// BOOT
+// ═══════════════════════════════════
+document.addEventListener('DOMContentLoaded',function(){
+  ALL_DIST.forEach(d=>{const o=document.createElement('option');o.value=d;o.textContent=d;document.getElementById('fallback-dist').appendChild(o);});
+  loadPersist();updateHeader();renderRecords();
+});
+</script>
+</body>
+</html>

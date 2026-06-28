@@ -73,6 +73,7 @@ export default function MapView({ listings, unverifiedLocations = [], onSelect }
   const tileRef = useRef<L.TileLayer | null>(null);
   const markersRef = useRef<L.Marker[]>([]);
   const unverifiedMarkersRef = useRef<L.CircleMarker[]>([]);
+  const dividerRef = useRef<L.Polyline | null>(null);
   const [tileStyle, setTileStyle] = useState('dark');
   const [search, setSearch] = useState('');
   const [searchMsg, setSearchMsg] = useState('');
@@ -101,6 +102,7 @@ export default function MapView({ listings, unverifiedLocations = [], onSelect }
 
     return () => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      if (dividerRef.current) { try { dividerRef.current.remove(); } catch { /* ignore */ } dividerRef.current = null; }
       map.remove();
       mapRef.current = null;
       tileRef.current = null;
@@ -128,6 +130,7 @@ export default function MapView({ listings, unverifiedLocations = [], onSelect }
     markersRef.current = [];
     unverifiedMarkersRef.current.forEach(m => { try { m.remove(); } catch { /* ignore */ } });
     unverifiedMarkersRef.current = [];
+    if (dividerRef.current) { try { dividerRef.current.remove(); } catch { /* ignore */ } dividerRef.current = null; }
 
     // Only plot listings with real coordinates
     const plottableListings = (listings || []).filter(isPlottable);
@@ -215,6 +218,39 @@ export default function MapView({ listings, unverifiedLocations = [], onSelect }
           console.warn('Failed to create unverified marker', uv.id, err);
         }
       });
+    }
+
+    // ── OSM Divider Line ────────────────────────────────────────────
+    // Draw a dashed polyline between verified markers (above) and
+    // unverified circles (below) so the two groups are visually split.
+    const verifiedLatLngs = markersRef.current.map(m => m.getLatLng());
+    const unverifiedLatLngs = unverifiedMarkersRef.current.map(m => m.getLatLng());
+
+    if (verifiedLatLngs.length > 0 && unverifiedLatLngs.length > 0 && mapRef.current) {
+      try {
+        const allLats = [...verifiedLatLngs, ...unverifiedLatLngs].map(ll => ll.lat).sort((a, b) => a - b);
+        const midLat = allLats[Math.floor(allLats.length / 2)];
+
+        // Span the full visible width plus generous padding
+        const bounds = mapRef.current.getBounds();
+        const west = bounds.getWest() - 5;
+        const east = bounds.getEast() + 5;
+
+        dividerRef.current = L.polyline(
+          [[midLat, west], [midLat, east]],
+          {
+            color: 'rgba(255,255,255,0.45)',
+            weight: 1.5,
+            dashArray: '8, 6',
+            interactive: false,
+          }
+        ).addTo(mapRef.current);
+
+        dividerRef.current.bindTooltip(
+          '<div style="font-size:10px;padding:1px 6px">↑ OSM verified &nbsp;·&nbsp; unverified ↓</div>',
+          { sticky: true, direction: 'top', className: '' }
+        );
+      } catch { /* non-fatal */ }
     }
 
     // Fit bounds to visible content
@@ -374,6 +410,7 @@ export default function MapView({ listings, unverifiedLocations = [], onSelect }
 
         {/* Legend */}
         <div className="absolute bottom-3 right-3 z-[1000] bg-black/70 backdrop-blur-sm rounded-lg p-2 text-[10px] text-white">
+          <div className="text-[9px] uppercase tracking-widest text-white/40 mb-1">OSM verified</div>
           <div className="flex items-center gap-2 mb-1">
             <span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" /> High Interest
           </div>
@@ -383,8 +420,13 @@ export default function MapView({ listings, unverifiedLocations = [], onSelect }
           <div className="flex items-center gap-2 mb-1">
             <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block" /> Low
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 mb-2">
             <span className="w-2.5 h-2.5 rounded-full bg-red-400 inline-block" /> Sold
+          </div>
+          <hr className="border-white/20 mb-2" />
+          <div className="text-[9px] uppercase tracking-widest text-white/40 mb-1">Not on OSM</div>
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full border border-dashed border-red-400 bg-red-200/40 inline-block" /> Unverified
           </div>
         </div>
       </div>

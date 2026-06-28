@@ -1,3 +1,17 @@
+/**
+ * lib/parser.ts — Uganda Real Estate Text Parser
+ *
+ * Improvements over previous version:
+ *  1. Compound price patterns  — "23m", "350k", "1.5b" all resolved
+ *  2. Half-acre pattern        — "half acre / ½ acre" reliably detected
+ *  3. Multi-method location    — preposition → comma → DB → regex cascade
+ *  4. Agent false-positive guard — enlarged stop-word set + length gate
+ *  5. Block splitter           — honours CSV rows, bullet, numbered, blank-line
+ *  6. Confidence scoring       — criteria returns 0-1 float, not booleans
+ *  7. District normalization   — canonical district names, alias map
+ *  8. All regex global flags reset before exec() to prevent state bugs
+ */
+
 import {
   UG_LOCATIONS,
   ALL_DISTRICTS,
@@ -8,45 +22,77 @@ import {
 } from './ugandaData';
 import type { ParsedInfo } from '@/types';
 
-// =============================================================================
-// TYPE DEFINITIONS
-// =============================================================================
+// ── Types ─────────────────────────────────────────────────────────────
+type LocResult    = { village: string; district: string | null };
+type SizeResult   = { sizeSqm: number | null; sizeDisplay: string };
+type CriteriaResult = {
+  hasSize: boolean; hasLocation: boolean; hasPrice: boolean; hasAgent: boolean;
+  confidence: number;
+};
+type SplitResult  = { propertyLines: string[]; otherLines: string[] };
+type ParseResult  = { info: ParsedInfo; criteria: CriteriaResult };
 
-type LocationResult = { village: string; district: string | null };
-type SizeResult = { sizeSqm: number | null; sizeDisplay: string };
-type CriteriaResult = { hasSize: boolean; hasLocation: boolean; hasPrice: boolean; hasAgent: boolean };
-type SplitResult = { propertyLines: string[]; otherLines: string[] };
-type ParseResult = { info: ParsedInfo; criteria: CriteriaResult };
+// ── Compiled constants ────────────────────────────────────────────────
+const SOLD_RE    = /\b(sold|taken|booked|reserved|unavailable|not\s+available)\b/i;
+const BARE_PRICE = /\b(\d{7,})\b/;
+const WS         = /\s+/g;
+const DIST_SUFFIX = /\s*(district|sub\s*county|sub-county|village|town|city|parish|ward|division|estate|block|zone)$/i;
 
-// =============================================================================
-// CONSTANTS & COMPILED REGEX
-// =============================================================================
-
-const SOLD_PATTERN = /\b(sold|taken|booked|reserved|unavailable|not\s+available)\b/i;
-const BARE_PRICE_PATTERN = /\b(\d{7,})\b/;
-const WHITESPACE_PATTERN = /\s+/g;
-const DISTRICT_SUFFIX_PATTERN = /\s*(district|sub\s*county|sub-county|village|town|city|parish|ward|division)$/i;
-
-const FALSE_POSITIVES = new Set([
-  'me', 'us', 'now', 'today', 'for', 'the', 'this', 'that',
-  'and', 'or', 'him', 'her', 'them', 'you', 'more', 'info',
-  'details', 'free', 'sale', 'rent', 'land', 'plot', 'acre',
-  'acres', 'million', 'size', 'price', 'contact', 'call',
+// Expanded stop-word list for agent extraction
+const AGENT_STOPS = new Set([
+  'me','us','now','today','for','the','this','that','and','or','him',
+  'her','them','you','more','info','details','free','sale','rent','land',
+  'plot','acre','acres','million','size','price','contact','call','next',
+  'area','agent','view','visit','see','open','daily','check','call','whatsapp',
 ]);
 
-const LOCATION_PATTERNS: RegExp[] = [
-  /\b(?:in|at|located\s+in|located\s+at|situated\s+in|situated\s+at)\s+([A-Z][\w\s,.\-]{1,50}?)(?=\s+(?:at\s+\d|for\s+|size|[(\d]|$|per\s+acre|negotiable|\.))/i,
-  /\b(?:near|around|close\s+to|adjacent\s+to)\s+([A-Z][\w\s,.\-]{1,40}?)(?=\s+(?:at|for|on|in|[.,]|$))/i,
-  /\b(?:off|along)\s+([A-Z][\w\s,.\-]{1,30}?)(?=\s+(?:road|highway|street|ave|avenue|[.,]|$))/i,
-  /\b(?:plot\s+in|land\s+in|house\s+in|property\s+in)\s+([A-Z][\w\s,.\-]{1,50}?)(?=\s+(?:at|for|[(\d]|$|\.))/i,
+// ── District alias normalizer ─────────────────────────────────────────
+const DISTRICT_ALIASES: Record<string, string> = {
+  'kampala': 'Kampala Central',
+  'kcca':    'Kampala Central',
+  'kitgum':  'Pader',
+  'agago':   'Pader',
+};
+
+function normalizeDistrict(d: string): string {
+  const low = d.toLowerCase().trim();
+  return DISTRICT_ALIASES[low] || ALL_DISTRICTS.find(
+    x => x.toLowerCase() === low || x.toLowerCase().replace(' central','') === low
+  ) || d;
+}
+
+// ── District inference regex map ──────────────────────────────────────
+const DIST_MAP: [RegExp, string][] = [
+  [/\b(gulu|pece|laroo|layibi|bardege|unyama|awach|abwoch|patiko|palaro)\b/i,  'Gulu'],
+  [/\b(nwoya|anaka|purongo)\b/i,        'Nwoya'],
+  [/\b(amuru|atiak|pabbo|mutema|bana)\b/i, 'Amuru'],
+  [/\b(omoro|lalogi|koro|atede|atyang)\b/i,'Omoro'],
+  [/\b(pader|agago|angagura|kitgum)\b/i, 'Pader'],
+  [/\b(nakasero|kololo|ntinda|bugolobi|muyenga|makindye|rubaga|kawempe|nansana|kireka|kira|kyaliwajjala|bweyogerere|kasubi|namungoona|busega|kampala)\b/i, 'Kampala Central'],
+  [/\b(wakiso|gayaza|matugga|kasangati|najjera|namugongo|kyengera|kitende|bunamwaya|lungujja)\b/i, 'Wakiso'],
+  [/\b(mukono|njeru|lugazi|seeta)\b/i,  'Mukono'],
+  [/\b(entebbe|kitoro)\b/i,             'Entebbe'],
+  [/\b(jinja|bugembe|kakira)\b/i,       'Jinja'],
+  [/\b(mbarara|kakoba|nyamitanga|rukuba)\b/i, 'Mbarara'],
+  [/\b(arua)\b/i,                       'Arua'],
+  [/\b(lira)\b/i,                       'Lira'],
+  [/\b(soroti)\b/i,                     'Soroti'],
+  [/\b(mbale)\b/i,                      'Mbale'],
+  [/\b(masaka)\b/i,                     'Masaka'],
+  [/\b(fort\s*portal)\b/i,              'Fort Portal'],
 ];
 
-const COMMA_LOCATION_PATTERN = /\b([A-Z][\w\s]{2,40}?),\s*(Gulu|Nwoya|Amuru|Omoro|Pader|Kampala|Wakiso|Mukono|Entebbe|Jinja|Mbarara|Arua|Lira|Soroti|Mbale|Masaka|Fort\s+Portal)\b/i;
+// ── Location patterns (preposition-based) ─────────────────────────────
+const LOC_PREPS: RegExp[] = [
+  /\b(?:in|at|located\s+in|located\s+at|situated\s+in|situated\s+at)\s+([A-Z][\w\s,.\-]{1,50}?)(?=\s+(?:at\s+\d|for\s+|size|[(\d]|$|per\s+acre|negotiable|\.|,))/i,
+  /\b(?:plot|land|house|property|acres?)\s+(?:in|at)\s+([A-Z][\w\s,.\-]{1,50}?)(?=\s+(?:at|for|[(\d]|$|\.))/i,
+  /\b(?:near|around|close\s+to|adjacent\s+to|off|along)\s+([A-Z][\w\s,.\-]{1,40}?)(?=\s+(?:at|for|on|in|[.,]|$))/i,
+];
 
-const AGENT_ROLE_PATTERN = /\b(?:agent|realtor|broker|manager|owner|contact|landlord)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/i;
-const AGENT_BY_PATTERN = /\b(?:contact|call|reach)\s+(?:me\s+|us\s+)?(?:on\s+)?(?:by\s+)?([A-Z][a-z]+)\b/i;
+const COMMA_LOC = /\b([A-Z][\w\s]{2,40}?),\s*(Gulu|Nwoya|Amuru|Omoro|Pader|Kampala|Wakiso|Mukono|Entebbe|Jinja|Mbarara|Arua|Lira|Soroti|Mbale|Masaka|Fort\s+Portal)\b/i;
 
-const INTEREST_WEIGHTS: Record<string, number> = {
+// ── Interest weight by district ───────────────────────────────────────
+const INTEREST_W: Record<string, number> = {
   'Kampala Central': 1.4, 'Entebbe': 1.1, 'Wakiso': 0.9,
   'Mukono': 0.7, 'Jinja': 0.7, 'Mbarara': 0.6, 'Arua': 0.55,
   'Gulu': 0.5, 'Nwoya': 0.5, 'Amuru': 0.5, 'Omoro': 0.5,
@@ -54,619 +100,392 @@ const INTEREST_WEIGHTS: Record<string, number> = {
   'Masaka': 0.45, 'Fort Portal': 0.55,
 };
 
-const DISTRICT_MAPPINGS: [RegExp, string][] = [
-  [/\b(gulu|pece|laroo|layibi|bardege|unyama|awach|abwoch|patiko|palaro)\b/i, 'Gulu'],
-  [/\b(nwoya|anaka|purongo)\b/i, 'Nwoya'],
-  [/\b(amuru|atiak|pabbo|mutema|bana)\b/i, 'Amuru'],
-  [/\b(omoro|lalogi|koro|atede|atyang)\b/i, 'Omoro'],
-  [/\b(pader|agago|angagura)\b/i, 'Pader'],
-  [/\b(kampala|nakasero|kololo|ntinda|bugolobi|muyenga|makindye|rubaga|kawempe|nansana|kireka|kira|kyaliwajjala|bweyogerere|kasubi|namungoona|busega)\b/i, 'Kampala Central'],
-  [/\b(wakiso|gayaza|matugga|kasangati|najjera|namugongo|kyengera|kitende|bunamwaya|lungujja)\b/i, 'Wakiso'],
-  [/\b(mukono|njeru|lugazi|seeta)\b/i, 'Mukono'],
-  [/\b(entebbe|kitoro)\b/i, 'Entebbe'],
-  [/\b(jinja|bugembe|kakira)\b/i, 'Jinja'],
-  [/\b(mbarara|kakoba|nyamitanga|rukuba)\b/i, 'Mbarara'],
-  [/\b(arua)\b/i, 'Arua'],
-  [/\b(lira)\b/i, 'Lira'],
-  [/\b(soroti)\b/i, 'Soroti'],
-  [/\b(mbale)\b/i, 'Mbale'],
-  [/\b(masaka)\b/i, 'Masaka'],
-  [/\b(fort\s+portal)\b/i, 'Fort Portal'],
-  [/\b(kitgum)\b/i, 'Pader'],
-];
-
-// Cache for expensive operations
-const locationCache = new Map<string, LocationResult>();
-const MAX_CACHE_SIZE = 1000;
-
-// =============================================================================
-// UTILITY FUNCTIONS
-// =============================================================================
-
-function str(v: unknown): string {
-  if (typeof v === 'string') return v;
-  if (v == null) return '';
-  return String(v);
-}
-
-function cleanText(text: string): string {
-  return text.replace(WHITESPACE_PATTERN, ' ').trim();
-}
-
-function cacheLocation(key: string, result: LocationResult): void {
-  if (locationCache.size >= MAX_CACHE_SIZE) {
-    // Clear oldest half of cache
-    const entries = Array.from(locationCache.keys());
-    entries.slice(0, Math.floor(entries.length / 2)).forEach(k => locationCache.delete(k));
+// ── Cache ─────────────────────────────────────────────────────────────
+const locCache = new Map<string, LocResult>();
+function cacheSet(k: string, v: LocResult) {
+  if (locCache.size > 800) {
+    const half = [...locCache.keys()].slice(0, 400);
+    half.forEach(x => locCache.delete(x));
   }
-  locationCache.set(key, result);
+  locCache.set(k, v);
 }
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────
 // SIZE PARSING
-// =============================================================================
-
+// ─────────────────────────────────────────────────────────────────────
 export function parseSize(text: string): SizeResult {
-  const raw = str(text);
-  if (!raw) return { sizeSqm: null, sizeDisplay: '' };
+  const t = String(text || '').toLowerCase();
+  if (!t) return { sizeSqm: null, sizeDisplay: '' };
 
-  const lower = raw.toLowerCase();
-
-  for (const pattern of SIZE_PATTERNS) {
-    // Reset global regex state
-    if (pattern.regex.global) pattern.regex.lastIndex = 0;
-
-    const match = pattern.regex.exec(lower);
-    if (!match || !match[0]) continue;
-
-    const result = parseSizeMatch(pattern.type, match);
-    if (result.sizeSqm && result.sizeSqm > 0) {
-      return result;
-    }
+  // "half acre" / "½ acre" special case
+  if (/\b(half|½|0\.5)\s*(?:an?\s*)?acres?\b/i.test(t)) {
+    return { sizeSqm: 2023, sizeDisplay: '0.5 acres (~2023m²)' };
   }
 
+  for (const p of SIZE_PATTERNS) {
+    if (p.regex.global) p.regex.lastIndex = 0;
+    const m = p.regex.exec(t);
+    if (!m) continue;
+    const r = _sizeMatch(p.type, m);
+    if (r.sizeSqm && r.sizeSqm > 0) return r;
+  }
   return { sizeSqm: null, sizeDisplay: '' };
 }
 
-function parseSizeMatch(type: string, match: RegExpExecArray): SizeResult {
+function _sizeMatch(type: string, m: RegExpExecArray): SizeResult {
   switch (type) {
-    case 'dimensions':
-      return parseDimensionsSize(match);
-    case 'acres':
-      return parseAcresSize(match);
-    case 'sqm':
-      return parseSqmSize(match);
-    case 'hectares':
-      return parseHectaresSize(match);
-    case 'decimals':
-      return parseDecimalsSize(match);
-    default:
-      return { sizeSqm: null, sizeDisplay: '' };
+    case 'dimensions': {
+      const a = parseFloat(m[1]), b = parseFloat(m[2]);
+      if (!a || !b || a <= 0 || b <= 0) break;
+      const ft = /ft|feet|'/i.test(m[0]);
+      const sqm = ft ? Math.round(a * b * 0.092903) : Math.round(a * b);
+      return { sizeSqm: sqm, sizeDisplay: ft ? `${a}×${b}ft (~${sqm}m²)` : `${a}×${b}m (${sqm}m²)` };
+    }
+    case 'acres': {
+      const raw = (m[1] || '').trim().toLowerCase();
+      const ac  = raw === 'half' ? 0.5 : parseFloat(raw);
+      if (!ac || ac <= 0) break;
+      const sqm = Math.round(ac * 4046.86);
+      return { sizeSqm: sqm, sizeDisplay: `${ac} acre${ac !== 1 ? 's' : ''} (~${sqm}m²)` };
+    }
+    case 'sqm': {
+      const v = parseFloat(m[1]);
+      if (!v || v <= 0) break;
+      return { sizeSqm: Math.round(v), sizeDisplay: `${Math.round(v)}m²` };
+    }
+    case 'hectares': {
+      const v = parseFloat(m[1]);
+      if (!v || v <= 0) break;
+      const sqm = Math.round(v * 10000);
+      return { sizeSqm: sqm, sizeDisplay: `${v} ha (${sqm}m²)` };
+    }
+    case 'decimals': {
+      const v = parseFloat(m[1]);
+      if (!v || v <= 0) break;
+      const sqm = Math.round(v * 404.686);
+      return { sizeSqm: sqm, sizeDisplay: `${v} decimal${v !== 1 ? 's' : ''} (~${sqm}m²)` };
+    }
   }
+  return { sizeSqm: null, sizeDisplay: '' };
 }
 
-function parseDimensionsSize(match: RegExpExecArray): SizeResult {
-  const dim1 = parseFloat(match[1]);
-  const dim2 = parseFloat(match[2]);
-  
-  if (!dim1 || !dim2 || dim1 <= 0 || dim2 <= 0) {
-    return { sizeSqm: null, sizeDisplay: '' };
-  }
-
-  const isFeet = /ft|feet|'/i.test(match[0]);
-  
-  if (isFeet) {
-    const sizeSqm = Math.round(dim1 * dim2 * 0.092903 * 100) / 100;
-    return {
-      sizeSqm,
-      sizeDisplay: `${dim1}×${dim2}ft (~${Math.round(sizeSqm)}m²)`,
-    };
-  }
-  
-  const sizeSqm = Math.round(dim1 * dim2 * 100) / 100;
-  return {
-    sizeSqm,
-    sizeDisplay: `${dim1}×${dim2}m (${Math.round(sizeSqm)}m²)`,
-  };
-}
-
-function parseAcresSize(match: RegExpExecArray): SizeResult {
-  const raw = (match[1] || '').toLowerCase().trim();
-  const acres = raw === 'half' ? 0.5 : parseFloat(raw);
-  
-  if (!acres || acres <= 0) return { sizeSqm: null, sizeDisplay: '' };
-  
-  const sizeSqm = Math.round(acres * 4046.86);
-  return {
-    sizeSqm,
-    sizeDisplay: `${acres} acre${acres !== 1 ? 's' : ''} (~${sizeSqm}m²)`,
-  };
-}
-
-function parseSqmSize(match: RegExpExecArray): SizeResult {
-  const val = parseFloat(match[1]);
-  if (!val || val <= 0) return { sizeSqm: null, sizeDisplay: '' };
-  
-  const sizeSqm = Math.round(val);
-  return { sizeSqm, sizeDisplay: `${sizeSqm}m²` };
-}
-
-function parseHectaresSize(match: RegExpExecArray): SizeResult {
-  const ha = parseFloat(match[1]);
-  if (!ha || ha <= 0) return { sizeSqm: null, sizeDisplay: '' };
-  
-  const sizeSqm = Math.round(ha * 10000);
-  return { sizeSqm, sizeDisplay: `${ha} ha (${sizeSqm}m²)` };
-}
-
-function parseDecimalsSize(match: RegExpExecArray): SizeResult {
-  const dec = parseFloat(match[1]);
-  if (!dec || dec <= 0) return { sizeSqm: null, sizeDisplay: '' };
-  
-  const sizeSqm = Math.round(dec * 404.686);
-  return {
-    sizeSqm,
-    sizeDisplay: `${dec} decimal${dec !== 1 ? 's' : ''} (~${sizeSqm}m²)`,
-  };
-}
-
-// =============================================================================
-// PRICE PARSING
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────
+// PRICE PARSING — improved compound patterns
+// ─────────────────────────────────────────────────────────────────────
+/** Extra patterns not in ugandaData (compound shorthands like "23m", "1.5b") */
+const EXTRA_PRICE: { re: RegExp; fn: (v: number) => number }[] = [
+  { re: /\b(\d+(?:\.\d+)?)\s*b(?:illion)?\b/i, fn: v => v * 1000 },
+  { re: /\b(\d+(?:\.\d+)?)\s*m(?:illion|ln)?\b/i, fn: v => v },
+  { re: /\b(\d+(?:\.\d+)?)\s*k\b/i, fn: v => v / 1000 },
+];
 
 export function parsePrice(text: string): number {
-  const raw = str(text);
-  if (!raw) return 0;
+  const t = String(text || '').toLowerCase().replace(/,/g, '').replace(WS, ' ').trim();
+  if (!t) return 0;
 
-  // Normalize: remove commas and collapse whitespace
-  const normalized = raw.toLowerCase().replace(/,/g, '').replace(/\s+/g, ' ').trim();
-
-  // Try structured patterns first
-  for (const pattern of PRICE_PATTERNS) {
-    if (pattern.regex.global) pattern.regex.lastIndex = 0;
-
-    const match = pattern.regex.exec(normalized);
-    if (!match?.[1]) continue;
-
-    const val = parseFloat(match[1]);
-    if (!val || val <= 0) continue;
-
-    if (pattern.multiplier !== null) {
-      const result = val * pattern.multiplier;
-      if (result > 0 && isFinite(result)) {
-        return Math.round(result * 100) / 100;
-      }
+  // Structured patterns first (from ugandaData)
+  for (const p of PRICE_PATTERNS) {
+    if (p.regex.global) p.regex.lastIndex = 0;
+    const m = p.regex.exec(t);
+    if (!m?.[1]) continue;
+    const v = parseFloat(m[1]);
+    if (!v || v <= 0) continue;
+    if (p.multiplier !== null) {
+      const r = v * p.multiplier;
+      if (r > 0 && isFinite(r)) return Math.round(r * 100) / 100;
     } else {
-      // Raw UGX: if value > 10000, it's in shillings, convert to millions
-      const result = val > 10000 ? val / 1_000_000 : val;
-      if (result > 0 && isFinite(result)) {
-        return Math.round(result * 100) / 100;
+      // Raw UGX string — convert from shillings if > 10 000
+      const r = v > 10000 ? v / 1_000_000 : v;
+      if (r > 0 && isFinite(r)) return Math.round(r * 100) / 100;
+    }
+  }
+
+  // Extra compound shorthands ("23m", "1.5b", "350k")
+  for (const { re, fn } of EXTRA_PRICE) {
+    const m = re.exec(t);
+    if (m?.[1]) {
+      const v = parseFloat(m[1]);
+      if (v > 0) {
+        const r = fn(v);
+        if (r > 0 && isFinite(r)) return Math.round(r * 100) / 100;
       }
     }
   }
 
-  // Fallback: bare large number (7+ digits = 10M+ UGX)
-  const bareMatch = BARE_PRICE_PATTERN.exec(normalized);
-  if (bareMatch?.[1]) {
-    const val = parseInt(bareMatch[1], 10);
-    if (val >= 10_000_000) {
-      return Math.round((val / 1_000_000) * 100) / 100;
-    }
+  // Bare large integer fallback (7+ digits → shillings)
+  const bare = BARE_PRICE.exec(t);
+  if (bare?.[1]) {
+    const v = parseInt(bare[1], 10);
+    if (v >= 10_000_000) return Math.round((v / 1_000_000) * 100) / 100;
   }
-
   return 0;
 }
 
-// =============================================================================
-// PHONE EXTRACTION
-// =============================================================================
-
+// ─────────────────────────────────────────────────────────────────────
+// PHONE
+// ─────────────────────────────────────────────────────────────────────
 export function extractPhone(text: string): string {
-  const t = str(text).trim();
-  if (!t) return '';
-
-  for (const pattern of PHONE_PATTERNS) {
-    const match = t.match(pattern);
-    if (match?.[0]) {
-      // Remove formatting characters
-      return match[0].replace(/[\s\-\(\)]/g, '');
-    }
+  const t = String(text || '').trim();
+  for (const p of PHONE_PATTERNS) {
+    const m = t.match(p);
+    if (m?.[0]) return m[0].replace(/[\s\-()]/g, '');
   }
-  
   return '';
 }
 
-// =============================================================================
-// AGENT EXTRACTION
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────
+// AGENT
+// ─────────────────────────────────────────────────────────────────────
+const ROLE_RE = /\b(?:agent|realtor|broker|manager|owner|landlord)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/i;
+const BY_RE   = /\b(?:contact|call|reach)\s+(?:on\s+)?([A-Z][a-z]{2,})\b(?!\s*\d)/i;
+
+function validName(n: string): boolean {
+  return n.length >= 2 &&
+    n.length <= 30 &&
+    /^[A-Z]/.test(n) &&
+    !AGENT_STOPS.has(n.toLowerCase()) &&
+    !/\d/.test(n);
+}
 
 export function extractAgent(text: string): string {
-  const t = str(text).trim();
-  if (!t) return '';
+  const t = String(text || '').trim();
 
-  // Pattern 1: "call/contact/whatsapp NAME"
-  const agentMatch = AGENT_NAME_PATTERN.exec(t);
-  if (agentMatch?.[1]) {
-    const name = cleanText(agentMatch[1]);
-    if (isValidName(name)) return name;
-  }
+  const m1 = AGENT_NAME_PATTERN.exec(t);
+  if (m1?.[1] && validName(m1[1].trim())) return m1[1].trim();
 
-  // Pattern 2: "agent/realtor/broker: NAME"
-  const roleMatch = AGENT_ROLE_PATTERN.exec(t);
-  if (roleMatch?.[1]) {
-    const name = roleMatch[1].trim();
-    if (isValidName(name)) return name;
-  }
+  const m2 = ROLE_RE.exec(t);
+  if (m2?.[1] && validName(m2[1].trim())) return m2[1].trim();
 
-  // Pattern 3: "contact/call by NAME"
-  const byMatch = AGENT_BY_PATTERN.exec(t);
-  if (byMatch?.[1]) {
-    const name = byMatch[1].trim();
-    if (isValidName(name)) return name;
-  }
+  const m3 = BY_RE.exec(t);
+  if (m3?.[1] && validName(m3[1].trim())) return m3[1].trim();
 
   return '';
 }
 
-function isValidName(name: string): boolean {
-  if (name.length < 2) return false;
-  if (!/^[A-Z]/.test(name)) return false;
-  if (FALSE_POSITIVES.has(name.toLowerCase())) return false;
-  if (/\d/.test(name)) return false;
-  return true;
-}
-
-// =============================================================================
-// LOCATION EXTRACTION
-// =============================================================================
-
-export function extractLocation(text: string): LocationResult {
-  const t = str(text).trim();
+// ─────────────────────────────────────────────────────────────────────
+// LOCATION
+// ─────────────────────────────────────────────────────────────────────
+export function extractLocation(text: string): LocResult {
+  const t = String(text || '').trim();
   if (!t) return { village: '', district: null };
 
-  // Check cache
-  const cacheKey = t.slice(0, 200);
-  const cached = locationCache.get(cacheKey);
-  if (cached) return cached;
+  const ck = t.slice(0, 200);
+  const hit = locCache.get(ck);
+  if (hit) return hit;
 
   const lower = t.toLowerCase();
   let village = '';
   let district: string | null = null;
 
-  // Method 1: Preposition-based extraction
-  village = extractVillageByPreposition(t);
-  
-  // Method 2: "PLACE, DISTRICT" format
-  if (!village) {
-    village = extractVillageByComma(t);
-  }
-  
-  // Method 3: Direct location match
-  if (!village) {
-    village = extractVillageByDirectMatch(lower);
+  // 1. Preposition patterns
+  for (const re of LOC_PREPS) {
+    const m = re.exec(t);
+    if (m?.[1]) {
+      const c = m[1].trim().replace(WS, ' ').replace(DIST_SUFFIX, '').trim();
+      if (c.length > 1 && /^[A-Z]/.test(c)) { village = c; break; }
+    }
   }
 
-  // Extract district from ALL_DISTRICTS
+  // 2. "PLACE, DISTRICT" comma pattern
+  if (!village) {
+    const m = COMMA_LOC.exec(t);
+    if (m?.[1]) village = m[1].trim();
+  }
+
+  // 3. Direct local DB match (longest first → greedy)
+  if (!village) {
+    const sorted = Object.keys(UG_LOCATIONS).sort((a, b) => b.length - a.length);
+    for (const n of sorted) {
+      if (n.length < 3) continue;
+      if (lower.includes(n.toLowerCase())) {
+        village = n.charAt(0).toUpperCase() + n.slice(1);
+        break;
+      }
+    }
+  }
+
+  // District from ALL_DISTRICTS list
   district = ALL_DISTRICTS.find(d => {
-    const distLower = d.toLowerCase().replace(' central', '');
-    return lower.includes(distLower);
+    const dl = d.toLowerCase().replace(' central', '');
+    return lower.includes(dl);
   }) || null;
 
-  // Fallback: infer district from village
+  // Infer district from village text
   if (!district) {
-    district = inferDistrictFromVillage(lower);
+    for (const [re, d] of DIST_MAP) {
+      if (re.test(lower)) { district = d; break; }
+    }
   }
 
-  const result: LocationResult = { village, district };
-  cacheLocation(cacheKey, result);
-  
+  if (district) district = normalizeDistrict(district);
+
+  const result: LocResult = { village, district };
+  cacheSet(ck, result);
   return result;
 }
 
-function extractVillageByPreposition(text: string): string {
-  for (const pattern of LOCATION_PATTERNS) {
-    const match = pattern.exec(text);
-    if (match?.[1]) {
-      const candidate = match[1]
-        .trim()
-        .replace(WHITESPACE_PATTERN, ' ')
-        .replace(DISTRICT_SUFFIX_PATTERN, '')
-        .trim();
-      
-      if (candidate.length > 1 && /^[A-Z]/.test(candidate)) {
-        return candidate;
-      }
-    }
-  }
-  return '';
-}
-
-function extractVillageByComma(text: string): string {
-  const match = COMMA_LOCATION_PATTERN.exec(text);
-  if (match?.[1]) {
-    return match[1].trim();
-  }
-  return '';
-}
-
-function extractVillageByDirectMatch(lower: string): string {
-  // Sort by length descending for greedy matching
-  const sorted = Object.entries(UG_LOCATIONS)
-    .sort((a, b) => b[0].length - a[0].length);
-  
-  for (const [name] of sorted) {
-    if (name.length < 3) continue;
-    if (lower.includes(name.toLowerCase())) {
-      return name.charAt(0).toUpperCase() + name.slice(1);
-    }
-  }
-  
-  return '';
-}
-
-function inferDistrictFromVillage(lower: string): string | null {
-  for (const [pattern, district] of DISTRICT_MAPPINGS) {
-    if (pattern.test(lower)) {
-      return district;
-    }
-  }
-  return null;
-}
-
-// =============================================================================
-// STATUS PARSING
-// =============================================================================
-
+// ─────────────────────────────────────────────────────────────────────
+// STATUS / INTEREST / TITLE
+// ─────────────────────────────────────────────────────────────────────
 export function parseStatus(text: string): 'sold' | 'unsold' {
-  return SOLD_PATTERN.test(str(text)) ? 'sold' : 'unsold';
+  return SOLD_RE.test(String(text || '')) ? 'sold' : 'unsold';
 }
-
-// =============================================================================
-// INTEREST INFERENCE
-// =============================================================================
 
 export function inferInterest(price: number, area: string): 'high' | 'medium' | 'low' {
   if (!price || price <= 0) return 'medium';
-
-  const weight = INTEREST_WEIGHTS[area] ?? 0.7;
-  const adjusted = price / weight;
-
-  if (adjusted >= 180) return 'high';
-  if (adjusted >= 80) return 'medium';
+  const w = INTEREST_W[area] ?? 0.7;
+  const adj = price / w;
+  if (adj >= 180) return 'high';
+  if (adj >= 80)  return 'medium';
   return 'low';
 }
 
-// =============================================================================
-// TITLE GENERATION
-// =============================================================================
-
 export function generateTitle(village: string, district: string, sizeSqm: number | null): string {
-  const location = village || district || 'Unknown';
-  
-  if (!sizeSqm || sizeSqm <= 0) {
-    return `Land in ${location}`;
-  }
-
+  const loc = village || district || 'Uganda';
+  if (!sizeSqm || sizeSqm <= 0) return `Land in ${loc}`;
   if (sizeSqm >= 4046) {
-    const acres = Math.round((sizeSqm / 4046.86) * 10) / 10;
-    return `${acres} acre${acres !== 1 ? 's' : ''} in ${location}`;
+    const ac = Math.round((sizeSqm / 4046.86) * 10) / 10;
+    return `${ac} acre${ac !== 1 ? 's' : ''} in ${loc}`;
   }
-
-  return `${Math.round(sizeSqm)}m² plot in ${location}`;
+  return `${Math.round(sizeSqm)}m² plot in ${loc}`;
 }
 
-// =============================================================================
-// BULK TEXT SPLITTING
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────
+// CRITERIA DETECTION — returns confidence float
+// ─────────────────────────────────────────────────────────────────────
+export function hasPropertyCriteria(text: string): CriteriaResult {
+  const lower = String(text || '').toLowerCase().trim();
+  if (!lower) return { hasSize: false, hasLocation: false, hasPrice: false, hasAgent: false, confidence: 0 };
+
+  const hasSize     = SIZE_PATTERNS.some(p => { if (p.regex.global) p.regex.lastIndex = 0; return p.regex.test(lower); });
+  const hasPrice    = PRICE_PATTERNS.some(p => { if (p.regex.global) p.regex.lastIndex = 0; return p.regex.test(lower); })
+    || EXTRA_PRICE.some(ep => ep.re.test(lower))
+    || BARE_PRICE.test(lower);
+  const hasLocation = /\b(?:in|at|located|situated|near|off|along)\s+[a-z]/i.test(lower)
+    || Object.keys(UG_LOCATIONS).some(n => n.length >= 3 && lower.includes(n));
+  const hasAgent    = /\b(?:call|contact|whatsapp|agent|realtor|broker|owner|landlord)\b/i.test(lower);
+
+  const score = [hasSize, hasPrice, hasLocation, hasAgent].filter(Boolean).length;
+  const confidence = score / 4;
+
+  return { hasSize, hasLocation, hasPrice, hasAgent, confidence };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// BLOCK SPLITTING — txt, csv, bullet, numbered, blank-line
+// ─────────────────────────────────────────────────────────────────────
+function isNewStart(line: string): boolean {
+  const t = line.trim();
+  const l = t.toLowerCase();
+  if (/^[•▪️\-*✓✅🔹🔸➤►▶]\s/.test(t))  return true;
+  if (/^\d{1,2}[.)]\s/.test(t))           return true;
+  if (/^(land|plot|for\s+sale|prime|residential|commercial|house|villa|apt|building|acre)/i.test(l)) return true;
+  const hasP = /(?:million|ugx|shs|\d+\s*m\b|\d{7,}|(?<!\d)\d+(?:\.\d+)?\s*[bBmMkK]\b)/i.test(l);
+  const hasS = /(?:acres?|sqm|m²|½|half\s+acre|\d+\s*[x×]\s*\d+|decimals?|hectares?)/i.test(l);
+  const hasL = /\b(?:in|at|located|near|off|along)\s+[A-Z]/i.test(l);
+  return [hasP, hasS, hasL].filter(Boolean).length >= 2;
+}
+
+function isValidBlock(block: string): boolean {
+  if (block.length < 12) return false;
+  if (!/\d/.test(block)) return false;
+  return /(?:million|ugx|shs|acres?|sqm|m²|half\s+acre|plot|land|\d+\s*[x×]\s*\d+|\d{7,}|\d+\s*[bBmMkK]\b)/i.test(block);
+}
 
 export function splitListingsAdvanced(bulk: string): string[] {
-  const text = str(bulk).trim();
+  const text = String(bulk || '').trim();
   if (!text) return [];
 
+  // CSV rows: if lines have commas and no clear bullet structure, treat each line as a block
   const lines = text.split(/\r?\n/);
+  const csvLike = lines.length > 1 &&
+    lines.filter(l => l.includes(',')).length / lines.length > 0.6 &&
+    !lines.some(l => /^[•▪️\-*✓]\s/.test(l.trim()));
+
+  if (csvLike) {
+    return lines
+      .map(l => l.split(',').map(c => c.replace(/^"|"$/g, '').trim()).join(' ').trim())
+      .filter(isValidBlock);
+  }
+
   const blocks: string[] = [];
-  let currentBlock = '';
+  let cur = '';
 
   for (const line of lines) {
-    const trimmed = line.trim();
-    
-    // Empty line = block separator
-    if (!trimmed) {
-      if (currentBlock) {
-        blocks.push(currentBlock.trim());
-        currentBlock = '';
-      }
+    const t = line.trim();
+    if (!t) {
+      if (cur) { blocks.push(cur.trim()); cur = ''; }
       continue;
     }
-
-    // Check if this line starts a new listing
-    if (isNewListingStart(trimmed) && currentBlock.length > 15) {
-      blocks.push(currentBlock.trim());
-      currentBlock = trimmed;
+    if (isNewStart(t) && cur.length > 12) {
+      blocks.push(cur.trim());
+      cur = t;
     } else {
-      currentBlock = currentBlock ? `${currentBlock} ${trimmed}` : trimmed;
+      cur = cur ? `${cur} ${t}` : t;
     }
   }
+  if (cur.trim()) blocks.push(cur.trim());
 
-  // Don't forget the last block
-  if (currentBlock.trim()) {
-    blocks.push(currentBlock.trim());
-  }
-
-  // If no blocks found, try splitting by double newlines
+  // Fallback: double-newline paragraphs
   if (blocks.length === 0 && text.includes('\n\n')) {
-    return text
-      .split(/\n\s*\n/)
-      .map(b => b.trim())
-      .filter(b => isValidListingBlock(b));
+    return text.split(/\n\s*\n/).map(b => b.trim()).filter(isValidBlock);
   }
 
-  return blocks.filter(b => isValidListingBlock(b));
+  return blocks.filter(isValidBlock);
 }
 
-function isNewListingStart(line: string): boolean {
-  const t = line.trim();
-  const lower = t.toLowerCase();
-
-  // Bullet points or numbered lists
-  if (/^[•▪️\-*✓✅🔹🔸➤►▶]\s/.test(t)) return true;
-  if (/^\d{1,2}[.)]\s/.test(t)) return true;
-
-  // Common property listing starters
-  if (/^(land|plot|for\s+sale|prime|residential|commercial|house|villa|apartment|acre|building)/i.test(lower)) {
-    return true;
-  }
-
-  // Check for combination of property indicators
-  const hasPrice = /(?:million|ugx|shs|\d{1,3}m\b|\d+\s*million|\b\d{7,}\b)/i.test(lower);
-  const hasSize = /(?:acres?|sqm|m²|\d+\s*[x×]\s*\d+|\bby\b|\d+\s*decimals?|\d+\s*hectares?)/i.test(lower);
-  const hasLocation = /\b(?:in|at|located|situated|near|around|along|off)\s+[A-Z]/i.test(lower);
-
-  // Two out of three indicators = likely new listing
-  const indicators = [hasPrice, hasSize, hasLocation].filter(Boolean).length;
-  return indicators >= 2;
-}
-
-function isValidListingBlock(block: string): boolean {
-  if (block.length < 15) return false;
-  if (!/\d/.test(block)) return false;
-  
-  return /(?:million|acres?|ugx|shs|plot|land|by|\d+\s*[x×]\s*\d+|\d{7,})/i.test(block);
-}
-
-// =============================================================================
-// PROPERTY CRITERIA DETECTION
-// =============================================================================
-
-export function hasPropertyCriteria(text: string): CriteriaResult {
-  const lower = str(text).toLowerCase().trim();
-  
-  if (!lower) {
-    return { hasSize: false, hasLocation: false, hasPrice: false, hasAgent: false };
-  }
-
-  const hasSize = SIZE_PATTERNS.some(p => p.regex.test(lower));
-  
-  // FIX: UG_LOCATIONS is an object, use Object.keys to get an array of names
-  const locationNames = Object.keys(UG_LOCATIONS);
-  const hasLocation = (
-    /\b(?:in|at|located|situated|near|around|off|along)\s+[a-z]/i.test(lower) ||
-    locationNames.some(loc => lower.includes(loc.toLowerCase()))
-  );
-  
-  const hasPrice = PRICE_PATTERNS.some(p => p.regex.test(lower));
-  
-  const hasAgent = /\b(?:call|contact|whatsapp|agent|realtor|broker|manager|owner|landlord)\b/i.test(lower);
-
-  return { hasSize, hasLocation, hasPrice, hasAgent };
-}
-
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────
 // FULL PARSE
-// =============================================================================
-
+// ─────────────────────────────────────────────────────────────────────
 export function parseFull(text: string, fallbackDistrict = 'Gulu'): ParseResult {
-  const safeText = str(text).trim();
-  
-  // Handle empty input
-  if (!safeText) {
-    return {
-      info: createEmptyInfo(fallbackDistrict),
-      criteria: { hasSize: false, hasLocation: false, hasPrice: false, hasAgent: false },
+  const safe = String(text || '').trim();
+  if (!safe) {
+    const info: ParsedInfo = {
+      village: '', district: fallbackDistrict, price: 0,
+      sizeSqm: null, sizeDisplay: 'unknown', status: 'unsold',
+      phone: '', agent: '', interest: 'medium',
+      title: `Land in ${fallbackDistrict}`,
     };
+    return { info, criteria: { hasSize:false, hasLocation:false, hasPrice:false, hasAgent:false, confidence:0 } };
   }
 
-  // Extract all information
-  const { village, district } = extractLocation(safeText);
-  const price = parsePrice(safeText);
-  const { sizeSqm, sizeDisplay } = parseSize(safeText);
-  const status = parseStatus(safeText);
-  const phone = extractPhone(safeText);
-  const agent = extractAgent(safeText);
-  
-  const effectiveDistrict = district || fallbackDistrict;
-  const interest = price > 0 ? inferInterest(price, effectiveDistrict) : 'medium';
-  const title = generateTitle(village, effectiveDistrict, sizeSqm);
+  const { village, district } = extractLocation(safe);
+  const price              = parsePrice(safe);
+  const { sizeSqm, sizeDisplay } = parseSize(safe);
+  const status             = parseStatus(safe);
+  const phone              = extractPhone(safe);
+  const agent              = extractAgent(safe);
+  const effectiveDist      = district || fallbackDistrict;
+  const interest           = price > 0 ? inferInterest(price, effectiveDist) : 'medium';
+  const title              = generateTitle(village, effectiveDist, sizeSqm);
 
   const info: ParsedInfo = {
-    village,
-    district: effectiveDistrict,
-    price,
-    sizeSqm,
+    village, district: effectiveDist, price, sizeSqm,
     sizeDisplay: sizeDisplay || (sizeSqm ? `${Math.round(sizeSqm)}m²` : 'unknown'),
-    status,
-    phone,
-    agent,
-    interest,
-    title,
+    status, phone, agent, interest, title,
   };
 
-  return {
-    info,
-    criteria: hasPropertyCriteria(safeText),
-  };
+  return { info, criteria: hasPropertyCriteria(safe) };
 }
 
-function createEmptyInfo(district: string): ParsedInfo {
-  return {
-    village: '',
-    district,
-    price: 0,
-    sizeSqm: null,
-    sizeDisplay: 'unknown',
-    status: 'unsold',
-    phone: '',
-    agent: '',
-    interest: 'medium',
-    title: `Land in ${district}`,
-  };
-}
-
-// =============================================================================
-// LINE SEPARATION
-// =============================================================================
-
+// ─────────────────────────────────────────────────────────────────────
+// LINE SEPARATION (used by analytics / UI)
+// ─────────────────────────────────────────────────────────────────────
 export function separatePropertyLines(text: string): SplitResult {
   const blocks = splitListingsAdvanced(text);
-  
   const propertyLines: string[] = [];
-  const otherLines: string[] = [];
+  const otherLines: string[]    = [];
 
-  if (blocks.length > 1) {
-    // Process block by block
-    for (const block of blocks) {
-      const criteria = hasPropertyCriteria(block);
-      if (criteria.hasSize || criteria.hasPrice || (criteria.hasLocation && (criteria.hasSize || criteria.hasPrice))) {
-        propertyLines.push(block);
-      } else {
-        otherLines.push(block);
-      }
-    }
-  } else {
-    // Fall back to line-by-line processing
-    const lines = str(text).split(/\r?\n/).filter(l => l.trim());
-    
-    for (const line of lines) {
-      const criteria = hasPropertyCriteria(line);
-      if (criteria.hasSize || criteria.hasPrice || (criteria.hasLocation && criteria.hasPrice)) {
-        propertyLines.push(line);
-      } else {
-        otherLines.push(line);
-      }
-    }
+  for (const b of blocks) {
+    const c = hasPropertyCriteria(b);
+    if (c.confidence >= 0.5) propertyLines.push(b);
+    else otherLines.push(b);
   }
-
   return { propertyLines, otherLines };
 }
 
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────
 // CACHE MANAGEMENT
-// =============================================================================
-
-export function clearLocationCache(): void {
-  locationCache.clear();
-}
-
-export function getCacheStats(): { size: number } {
-  return { size: locationCache.size };
-}
+// ─────────────────────────────────────────────────────────────────────
+export function clearLocationCache(): void { locCache.clear(); }
+export function getCacheStats() { return { size: locCache.size }; }
